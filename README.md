@@ -6,10 +6,11 @@
 
  - Un outil pour trier et renommer par IA des documents administratifs
  - Sources images ou PDF acceptés
- - Analyse du contenu (OCR) des fichiers, puis extraction du contenu par IA (mistral via ollama)
+ - Analyse du contenu (OCR) des fichiers, puis extraction du contenu par IA (llama via ollama)
  - Sortie : `Date Institution Objet.ext`
+ - L'IA extrait 3 possibilités pour l'institution et l'objet, et retient la meilleure.
  - L'IA tente d'harmoniser-simplifier la sortie.
- -  Ecrit pour un vieux laptop peu puissant.
+ - Ecrit pour un vieux laptop peu puissant.
 
 ## Installation éclair
 
