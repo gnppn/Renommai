@@ -4,7 +4,7 @@
 Script de tri et renommage automatique de documents (PDF, PNG, JPG) basé sur :
 - **OCR** : Extraction de texte via Tesseract
 - **Analyse IA** : Détection Institution/Objet/Date via Ollama
-- **Renommage** : Génération automatique de noms fichiers selon le format `YYYY-MM Institution Objet.ext`
+- **Renommage** : Génération automatique de noms fichiers selon le format `YYYY-MM Institution Objet.ext` (en Title Case)
 
 ---
 
@@ -149,11 +149,11 @@ Fonction dédiée : `create_searchable_pdf_page(img)`
 
 **⚠️ Effectuée APRÈS OCR et extraction dates**
 
-##### Optimisation: Première Page + Sections Essentielles
+##### Optimisation: Première Page COMPLÈTE
 
-Pour minimiser latence Ollama, le texte envoyé est optimisé :
+Le texte envoyé à Ollama est TOUTE la première page du document pour maximiser le contexte disponible pour l'analyse :
 
-- **`extract_first_page(text)`** : Limite extraction à ~1200 chars (première page heuristique)
+- **`extract_first_page(text)`** : Extraire 1ère page complète (~1200 chars heuristique)
   - Parcourt les lignes du texte
   - Accumule jusqu'à 1200 caractères
   - Coupe à limite pour respecter "1ère page"
@@ -164,48 +164,59 @@ Pour minimiser latence Ollama, le texte envoyé est optimisé :
   - Total ~400-500 chars : juste ce qui faut pour identifier Institution/Objet/Date
   - Très compact pour réponse ultra-rapide Ollama
 
-##### Flux Passe 1 (Strict - Ultra-Rapide)
-- Texte envoyé : Sections essentielles seulement (~400-500 chars)
-- Max contexte : 800 chars
-- Utilisé pour documents simples ou haute confiance
-- Gain latence : **-55% vs envoi complet**
+##### Flux Unique: Analyse Complète sur 1ère Page
+- Texte envoyé : 1ère page COMPLÈTE du document (~1200 chars)
+- Contexte maximal pour meilleure détection Institution/Objet/Date
+- Analyse directe sans extrait essentialisé
+- Impact : Meilleure précision sur détection de l'objet du document
 
-##### Flux Passe 2 (Fallback - Flexible)
-- Texte envoyé : Toute la 1ère page (~1200 chars)
-- Max contexte : 1200 chars
-- Déclenché si Passe 1 retourne "inconnu" pour Institution ou Objet
-- Utilise texte du fichier original (si disponible)
-- Plus de contexte = résultats potentiellement plus fiables
-
-##### Résumé Gains Performance
-```
-                      AVANT        APRÈS        GAIN
-Passe 1:
-  Texte envoyé:     2000 chars   800 chars    -60%
-  Latence:          ~30s         ~8s          -74%
-
-Passe 2 (fallback):
-  Texte envoyé:     3000 chars   1200 chars   -60%
-  Latence:          ~30s         ~8s          -74%
-
-Batch (6 fichiers): ~186s        ~48s         -74%
-```
-
-##### Prompt Ollama (Format Strict)
+##### Prompt Ollama (Format Multi-Variante avec 3 Candidats)
 
 ```
-Analyse uniquement le texte ci-dessous (première page du document) et fournis strictement trois champs : Institution, Objet et Date.
+Tu es un assistant d'analyse de documents. Analyse le texte ci-dessous (première page d'un document) et extrais STRICTEMENT trois champs : Institution, Objet et Date.
 
-Institution : Nom de l'émetteur (banque, employeur, école, administration...). Simplifie au maximum en supprimant articles ou formes juridiques en tête. Exemple générique : "La société anonyme Le Monde Interactif" → "Le Monde Interactif". Si non identifiable ou en cas de doute, retourne "inconnu".
-Objet : Choisis l'intitulé qui ressemble le plus à un titre sur la première page (ligne de titre/document). Si aucun titre clair n'est disponible ou en cas de doute, retourne "inconnu".
-Date : Format attendu YYYY-MM si un mois fiable est présent ; à défaut YYYY si seule l'année est certaine. Priorise les dates candidates : {dates}. Si aucune date sûre, retourne "inconnu".
+IMPORTANT: Pour Institution et Objet, propose 3 variantes différentes classées par confiance (Variante 1 = plus probable, Variante 3 = moins probable).
 
-Format de sortie (exactement 3 lignes, sans commentaire) :
-Institution: <valeur ou "inconnu">
-Objet: <valeur ou "inconnu">
-Date: <YYYY-MM ou YYYY ou "inconnu">
+INSTRUCTIONS DÉTAILLÉES:
 
-Rigueur : Si tu n'es pas certain d'un champ, retourne "inconnu".
+1. INSTITUTION (Nom de l'émetteur/organisme)
+   - Identifie l'organisation qui émet le document
+   - Simplifie AGRESSIVEMENT : supprime articles, formes juridiques
+   - Propose 3 variantes différentes (de la plus à la moins probable)
+   - Format : Title Case
+   - Si impossible, retourne "inconnu"
+
+2. OBJET (Type/Nature du document)
+   - Déduis le type GÉNÉRAL du document à partir de son contenu
+   - Exemples : "Facture", "Releve Bancaire", "Contrat De Travail", "Fiche De Paie"
+   - Propose 3 variantes différentes (de la plus à la moins probable)
+   - Format : Title Case, court et descriptif (2-5 mots)
+   - Si le type n'est pas identifiable, retourne "inconnu"
+
+3. DATE (Horodatage du document)
+   - Cherche la date d'émission du document
+   - Format attendu : YYYY-MM (année-mois)
+   - Format accepté : YYYY (année seule) en dernier recours
+   - Candidates prioritaires : {dates}
+   - Si aucune date fiable, retourne "inconnu"
+
+FORMAT DE SORTIE STRICT (chaque ligne sur une nouvelle ligne):
+Institution Variante 1: <valeur>
+Institution Variante 2: <valeur>
+Institution Variante 3: <valeur>
+Objet Variante 1: <valeur>
+Objet Variante 2: <valeur>
+Objet Variante 3: <valeur>
+Date: <valeur>
+
+Exemple:
+Institution Variante 1: Banque De France
+Institution Variante 2: Banque Nationale
+Institution Variante 3: inconnu
+Objet Variante 1: Releve De Compte
+Objet Variante 2: Releve Bancaire
+Objet Variante 3: Document Bancaire
+Date: 2024-12
 
 Texte :
 {text}
@@ -213,30 +224,64 @@ Texte :
 
 ##### Appel Ollama
 - Modèle configurable (par défaut : mistral)
+- Texte : 1ère page COMPLÈTE du document (~1200 chars)
 - Streaming de réponse (affichage point par point `...`)
 - Timeout de 120 secondes max par analyse
-- Thread daemon non-bloquant avec gestion du KeyboardInterrupt
 - Gestion d'erreurs avec fallback gracieux
 
-#### 5️⃣ **Extraction des Champs d'Analyse - Parse Strict**
+#### 5️⃣ **Extraction des Champs d'Analyse - Multi-Variante avec Sélection Intelligente**
 
-##### Parsing de la Réponse Ollama avec Filtrage + Harmonisation
+##### Parsing de la Réponse Ollama - 3 Variantes par Champ
 
 Fonction : `parse_analysis(text, first_page_text=None)`
 
-- Recherche labels : `Institution:`, `Objet:`, `Date:` puis applique :
-  - Institution : simplification (suppression articles/formes juridiques en tête), ex. "La société anonyme Le Monde Interactif" → "Le Monde Interactif".
-  - Objet : remplacé par le titre plausible détecté sur la 1ère page (`title_from_first_page`).
-  - Date : format requis `YYYY-MM` (fallback extraction `YYYY-MM` dans la valeur).
-- Filtrage commentaires : retire ce qui suit `(` ou `[` dans chaque valeur.
-- Certitude : la date doit être au format `YYYY-MM`, max 1 champ "inconnu" sur Institution/Objet.
+**Étape 1 : Extraction des 3 Variantes**
+- Recherche labels : `Institution Variante 1:`, `Institution Variante 2:`, `Institution Variante 3:`
+- Recherche labels : `Objet Variante 1:`, `Objet Variante 2:`, `Objet Variante 3:`
+- Recherche label : `Date:`
+- Auto-remplissage avec `"inconnu"` si moins de 3 variantes trouvées
+
+**Étape 2 : Extraction du Titre du Document**
+- Fonction : `title_from_first_page(first_page_text)`
+- Heuristique : Identifie le premier titre plausible de la première page
+- Filtres appliqués :
+  - Doit être 6-80 caractères
+  - Doit contenir suffisamment de lettres
+  - Ignore les en-têtes génériques ("page", "document", "table", etc.)
+- Retourne : Le titre détecté ou `None` si aucun titre trouvé
+
+**Étape 3 : Sélection Intelligente de la Meilleure Variante**
+- Fonction : `best_match_with_title(variants, title_text)`
+- Algorithme de scoring (pour chaque variante) :
+  - **Match exact** (variante == titre) : Score = 1000
+  - **Sous-ensemble** (variante ⊆ titre) : Score = 500 + (mots_communs × 50)
+  - **Chevauchement de mots** : Score = mots_communs × 50
+- Sélectionne la variante avec le score le plus élevé
+- Fallback : Si aucun titre ou tous "inconnu", retourne variante 1 par défaut
+
+**Exemple de Sélection** :
+```
+Titre détecté: "Relevé de compte bancaire"
+Variantes:     ["Relevé De Compte", "Relevé Bancaire", "Document Financier"]
+Scores:        [600 (substring), 500, 0]
+Résultat:      "Relevé De Compte" ✓
+```
+
+**Étape 4 : Simplification du Nom Institution**
+- Fonction : `simplify_institution_name(name)`
+- Supprime articles au début : `la`, `le`, `les`, `l'`, `the`
+- Supprime formes juridiques à la fin : `S.A.`, `S.A.S.`, `SA`, `SAS`, `SARL`, `SACS`, `SCS`, `GMBH`, `INC`, `LTD`, `PLC`, `LLC`, `CORP`, `COMPANY`, `LIMITED`, `anonyme`, `société`
+- Supporte formes avec ou sans points : `S.A.S.` et `SAS` indifféremment
+- Exemple : `"La Banque Nationale S.A.S."` → `"Banque Nationale"`
 
 - **Tuple de Retour** :
   ```python
   (institution, objet, date, certitude)
   ```
-  - **certitude** : `True` si date valide (format YYYY-MM) ET max 1 champ "inconnu" parmi Institution/Objet
-  - **certitude** : `False` si date invalide OU 2+ champs "inconnu"
+  - **institution** : Meilleure variante sélectionnée + simplifiée
+  - **objet** : Meilleure variante sélectionnée
+  - **date** : Valeur extraite (YYYY-MM ou "inconnu")
+  - **certitude** : `True` si date valide (YYYY-MM) ET max 1 champ "inconnu" parmi Institution/Objet; `False` sinon
 
 ##### Validation Finale
 - **Date OBLIGATOIRE** : Format `YYYY-MM` stricte (regex `\d{4}-\d{2}`)
@@ -259,13 +304,13 @@ Fonction : `parse_analysis(text, first_page_text=None)`
 Fonction : `sanitize(s)` - Nettoyage AGRESSIF
 - Supprime caractères invalides : `\ / * ? : " < > | ( ) [ ] { }`
 - Supprime caractères de contrôle : `\n \t \r`
-- Limite STRICTE : 35 chars max par champ
+- Pas de limite de longueur : Conservation de la longueur complète
 - Retourne "inconnu" si vide après nettoyage
 
-Fonction : `generate_name(inst, obj, date, ext)` - Format strict
+Fonction : `generate_name(inst, obj, date, ext)` - Format strict en Title Case
 - Applique `sanitize()` à Institution et Objet
-- Format FINAL : `YYYY-MM Institution_clean Objet_clean.ext`
-- Exemple : `2024-04 Banque de France Fiche de paie.pdf`
+- Format FINAL : `{YYYY-MM} {Institution} {Objet}.{ext}` (en Title Case : une majuscule par mot)
+- Exemple : `2024-04 Banque De France Fiche De Paie.pdf`
 - Pas de commentaires ou métadata dans le nom
 
 ##### Actions sur Succès
@@ -589,11 +634,9 @@ SOURCE_DIR/
   - `text` : String à analyser
   - `dates` : List de dates candidates
   - `model` : Nom du modèle Ollama à utiliser
-  - `pass_level` : "initial" (strict) ou "fallback" (flexible)
 - **Processus** :
-  - Passe 1 ("initial") : Utilise `extract_essential_sections()` (~800 chars max)
-  - Passe 2 ("fallback") : Utilise `extract_first_page()` (~1200 chars max)
-  - Formatte prompt avec dates candidates
+  - Extrait 1ère page COMPLÈTE du document (~1200 chars)
+  - Formatte prompt avec 1ère page complète et dates candidates
   - Appelle `ollama.generate()` en mode non-streaming
 - **Retour** : String (réponse brute de Ollama) ou None si erreur
 - **Gestion erreurs** : Affiche erreur, retourne None
@@ -604,14 +647,14 @@ SOURCE_DIR/
 - **Processus** :
   1. Recherche labels `Institution:`, `Objet:`, `Date:`
   2. Extrait valeur AVANT premier `(` ou `[` (commentaire)
-  3. Limite à 40 chars (Institution/Objet)
+  3. Utilise les valeurs directement (déjà adaptées par Ollama au format nom)
   4. Valide format date (YYYY-MM strict)
   5. Calcule certitude : date valide ET max 1 champ "inconnu"
 - **Retour** : (institution, objet, date, certitude)
 - **Exemple** :
   ```
-  Input:  "Institution: Banque de France (confidentiel)\nObjet: Fiche de paie (doc)\nDate: 2024-04 (exact)"
-  Output: ("Banque de France", "Fiche de paie", "2024-04", True)
+  Input:  "Institution: Banque De France\nObjet: Releve De Compte\nDate: 2024-04"
+  Output: ("Banque De France", "Releve De Compte", "2024-04", True)
   ```
 
 ### Renommage
@@ -622,10 +665,10 @@ SOURCE_DIR/
 - **Processus** :
   1. Supprime caractères invalides FS : `\ / * ? : " < > | ( ) [ ] { }`
   2. Supprime contrôle chars : `\n \t \r`
-  3. Tronque à 35 chars
+  3. Pas de limitation de longueur
   4. Strip whitespace
 - **Retour** : String propre ou "inconnu" si vide
-- **Impact** : Noms portables sur tous les OS
+- **Impact** : Noms portables sur tous les OS, longueur illimitée
 
 #### `generate_name(inst, obj, date, ext)`
 - **Objectif** : Générer nom de fichier strict

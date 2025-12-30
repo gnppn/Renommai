@@ -36,6 +36,10 @@ python renommeur.py
 - Un log CSV est ajouté dans le dossier d’export.
 - Interrompez le script **avec Ctrl+C**
 
+## Renommeur interactif
+
+Le second script encore plus expérimental, __renommeur_interactif.py__ fournit plusieurs choix de nom de fichier après l'analyse.
+
 ## Notes de fiabilité
 
 - Dates exigent `YYYY-MM` ou, à défaut, `YYYY`.
