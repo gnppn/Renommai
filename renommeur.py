@@ -872,12 +872,14 @@ def main():
     config["SOURCE_DIR"] = source_dir
     save_config(config)
     
-    # Sélection modèle
+    # Sélection modèle (masquer llava qui est utilisé automatiquement pour la vision)
     try:
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
-        models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
+        all_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
+        # Filtrer les modèles llava (utilisés automatiquement pour l'analyse vision)
+        models = [m for m in all_models if not m.startswith('llava')]
         if models:
-            print("Modèles Ollama:")
+            print("Modèles Ollama (analyse texte):")
             for i, m in enumerate(models, 1):
                 print(f"  {i}. {m}")
             choix = input(f"Choix [{config['OLLAMA_MODEL']}]: ").strip()
