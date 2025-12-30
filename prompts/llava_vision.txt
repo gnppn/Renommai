@@ -1,0 +1,6 @@
+Regarde cette image de document et réponds:
+
+Institution: (lis le nom dans le logo ou l'en-tête en haut)
+Type: (facture? relevé bancaire? fiche de paie? contrat? courrier?)
+Dates: (toutes les dates que tu vois)
+Texte: (recopie TOUT le texte visible, ligne par ligne, sans rien omettre)

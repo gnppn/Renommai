@@ -57,6 +57,16 @@ except:
 
 # ========== CONFIGURATION ==========
 
+SCRIPT_DIR = Path(__file__).parent
+PROMPTS_DIR = SCRIPT_DIR / "prompts"
+
+def load_prompt(name):
+    """Charge un prompt depuis le dossier prompts/."""
+    prompt_file = PROMPTS_DIR / f"{name}.txt"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding='utf-8')
+    raise FileNotFoundError(f"Prompt non trouvé: {prompt_file}")
+
 DEFAULT_CONFIG = {
     "SOURCE_DIR": "documents",
     "EXPORT_DIR": "Export",
@@ -481,24 +491,8 @@ def analyze_llava(image_path, model="llava:latest"):
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
         
-        # Prompt vision: extraire TOUT le texte brut visible
-        vision_prompt = """Ceci est la PREMIÈRE PAGE d'un document administratif.
-
-Ta mission est d'extraire TOUT le texte brut visible sur cette image, exactement comme tu le lis.
-
-Réponds avec ce format:
-
-[TEXTE EXTRAIT]
-(Retranscris ici TOUT le texte visible sur l'image, ligne par ligne, tel quel)
-
-[ANALYSE]
-Institution/Émetteur: (nom de l'organisme qui a émis ce document)
-Type de document: (facture, relevé, contrat, etc.)
-Dates visibles: (toutes les dates que tu vois)
-
-Sois exhaustif pour le texte extrait. Ne résume pas, retranscris tout."""
+        vision_prompt = load_prompt("llava_vision")
         
-        # Appel llava avec image
         response = ollama.generate(
             model=model,
             prompt=vision_prompt,
@@ -516,66 +510,6 @@ Sois exhaustif pour le texte extrait. Ne résume pas, retranscris tout."""
     except Exception as e:
         return None
 
-PROMPT_TEMPLATE = """Tu es un assistant d'analyse de documents. Tu reçois plusieurs sources d'information sur un document et tu dois extraire STRICTEMENT trois champs : Institution, Objet et Date.
-
-SOURCES D'INFORMATION DISPONIBLES:
-- NOM FICHIER ORIGINAL : Le nom du fichier source (peut contenir des indices)
-- TEXTE LLAVA : Texte extrait visuellement par IA vision (très fiable pour le contenu visible)
-- TEXTE TESSERACT : Texte extrait par OCR (peut contenir des erreurs)
-- DATES CANDIDATES : Dates détectées automatiquement dans le document
-
-CROISE toutes ces sources pour déterminer les informations les plus fiables. En cas de conflit, privilégie LLAVA > TESSERACT > NOM FICHIER.
-
-IMPORTANT: Pour Institution et Objet, propose 3 variantes différentes classées par confiance (Variante 1 = plus probable, Variante 3 = moins probable).
-
-INSTRUCTIONS DÉTAILLÉES:
-
-1. INSTITUTION (Nom de l'émetteur/organisme)
-   - Identifie l'organisation qui émet le document
-   - Simplifie AGRESSIVEMENT : supprime articles, formes juridiques
-   - Propose 3 variantes différentes (de la plus à la moins probable)
-   - Format : Title Case
-   - Si impossible, retourne "inconnu"
-
-2. OBJET (Type/Nature du document)
-   - Déduis le type GÉNÉRAL du document à partir de son contenu
-   - Exemples : "Facture", "Releve Bancaire", "Contrat De Travail", "Fiche De Paie"
-   - Propose 3 variantes différentes (de la plus à la moins probable)
-   - Format : Title Case, court et descriptif (2-5 mots)
-   - Si le type n'est pas identifiable, retourne "inconnu"
-
-3. DATE (Horodatage du document)
-   - Cherche la date d'émission du document
-   - Format attendu : YYYY-MM (année-mois)
-   - Format accepté : YYYY (année seule) en dernier recours
-   - Candidates prioritaires : {dates}
-   - ATTENTION aux dates avec mois nommés (ex: "23 janvier 2012"):
-     * Le PREMIER nombre (23) est le JOUR, PAS l'année
-     * Le DERNIER nombre à 4 chiffres (2012) est l'ANNÉE
-     * Donc "23 janvier 2012" = 2012-01, PAS 2023-01
-   - Si aucune date fiable, retourne "inconnu"
-
-FORMAT DE SORTIE STRICT (chaque ligne sur une nouvelle ligne):
-Institution Variante 1: <valeur>
-Institution Variante 2: <valeur>
-Institution Variante 3: <valeur>
-Objet Variante 1: <valeur>
-Objet Variante 2: <valeur>
-Objet Variante 3: <valeur>
-Date: <valeur>
-
-Exemple:
-Institution Variante 1: Banque De France
-Institution Variante 2: Banque Nationale
-Institution Variante 3: inconnu
-Objet Variante 1: Releve De Compte
-Objet Variante 2: Releve Bancaire
-Objet Variante 3: Document Bancaire
-Date: 2024-12
-
-Texte du document:
-{text}
-"""
 
 def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial", original_filename=None):
     """Analyse le texte avec Ollama et retourne Institution, Objet, Date."""
@@ -594,7 +528,8 @@ def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial
     context_parts.append(f"[DATES CANDIDATES]\n{dates_str}")
     
     text_to_send = "\n\n".join(context_parts)
-    prompt = PROMPT_TEMPLATE.format(dates=dates_str, text=text_to_send)
+    prompt_template = load_prompt("ollama_analysis")
+    prompt = prompt_template.format(dates=dates_str, text=text_to_send)
     
     try:
         response = ollama.generate(model=model, prompt=prompt, stream=False)
