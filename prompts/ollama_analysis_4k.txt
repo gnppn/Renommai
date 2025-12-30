@@ -1,0 +1,22 @@
+Analyse ce document et extrais: Institution, Objet, Date.
+
+Sources disponibles (fiabilité: vision > OCR > nom fichier):
+{text}
+
+Dates candidates: {dates}
+
+Règles:
+- Institution = émetteur, sans "La/Le/SA/SARL", ex: "Banque Populaire"
+- Objet = type de document, ex: "Facture", "Fiche De Paie"
+- Date = YYYY-MM. "23 janvier 2012" → 2012-01 (pas 2023!)
+- Si certitude haute, déduis les infos manquantes
+- "inconnu" seulement si aucune piste
+
+Réponds:
+Institution 1: 
+Institution 2: 
+Institution 3: 
+Objet 1: 
+Objet 2: 
+Objet 3: 
+Date:

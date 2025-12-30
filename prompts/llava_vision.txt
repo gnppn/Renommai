@@ -1,6 +1,9 @@
-Regarde cette image de document et réponds:
+Lis cette image de document administratif.
 
-Institution: (lis le nom dans le logo ou l'en-tête en haut)
-Type: (facture? relevé bancaire? fiche de paie? contrat? courrier?)
-Dates: (toutes les dates que tu vois)
-Texte: (recopie TOUT le texte visible, ligne par ligne, sans rien omettre)
+Réponds exactement dans ce format:
+
+Institution: [nom de l'organisme visible dans le logo/en-tête, ex: "Edf", "Credit Agricole"]
+Type: [type de document, ex: "Facture", "Releve Bancaire", "Fiche De Paie", "Contrat"]
+Dates: [toutes les dates visibles, ex: "15/03/2024, 01/04/2024"]
+Texte:
+[recopie TOUT le texte visible ligne par ligne, du haut vers le bas, sans résumer]

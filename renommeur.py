@@ -60,12 +60,74 @@ except:
 SCRIPT_DIR = Path(__file__).parent
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 
-def load_prompt(name):
-    """Charge un prompt depuis le dossier prompts/."""
+# Cache pour la taille de contexte des modèles
+_model_context_cache = {}
+
+def get_model_context_size(model_name):
+    """Récupère la taille de contexte d'un modèle Ollama."""
+    if model_name in _model_context_cache:
+        return _model_context_cache[model_name]
+    
+    try:
+        result = subprocess.run(
+            ['ollama', 'show', model_name],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout
+        
+        # Chercher "context length" ou "num_ctx" dans la sortie
+        for line in output.splitlines():
+            line_lower = line.lower()
+            if 'context' in line_lower or 'num_ctx' in line_lower:
+                # Extraire le nombre
+                import re
+                numbers = re.findall(r'\d+', line)
+                if numbers:
+                    ctx_size = int(numbers[-1])
+                    _model_context_cache[model_name] = ctx_size
+                    return ctx_size
+        
+        # Défaut si non trouvé: estimer selon le nom du modèle
+        if '32k' in model_name or '32b' in model_name:
+            return 32768
+        elif '16k' in model_name:
+            return 16384
+        elif '8k' in model_name or '8b' in model_name:
+            return 8192
+        else:
+            return 4096  # Défaut conservateur
+    except:
+        return 4096  # Défaut en cas d'erreur
+
+def load_prompt(name, model_name=None):
+    """Charge un prompt adapté à la taille du modèle."""
+    if model_name:
+        ctx_size = get_model_context_size(model_name)
+        
+        # Sélectionner le prompt selon la taille de contexte
+        if ctx_size >= 16384:
+            suffix = "_16k"
+        elif ctx_size >= 8192:
+            suffix = "_8k"
+        else:
+            suffix = "_4k"
+        
+        # Essayer le prompt spécifique, sinon le générique
+        prompt_file = PROMPTS_DIR / f"{name}{suffix}.txt"
+        if prompt_file.exists():
+            return prompt_file.read_text(encoding='utf-8')
+    
+    # Fallback: prompt générique (4k par défaut)
     prompt_file = PROMPTS_DIR / f"{name}.txt"
     if prompt_file.exists():
         return prompt_file.read_text(encoding='utf-8')
-    raise FileNotFoundError(f"Prompt non trouvé: {prompt_file}")
+    
+    # Dernier recours: prompt 4k
+    prompt_file = PROMPTS_DIR / f"{name}_4k.txt"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding='utf-8')
+    
+    raise FileNotFoundError(f"Prompt non trouvé: {name}")
 
 DEFAULT_CONFIG = {
     "SOURCE_DIR": "documents",
@@ -528,7 +590,7 @@ def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial
     context_parts.append(f"[DATES CANDIDATES]\n{dates_str}")
     
     text_to_send = "\n\n".join(context_parts)
-    prompt_template = load_prompt("ollama_analysis")
+    prompt_template = load_prompt("ollama_analysis", model_name=model)
     prompt = prompt_template.format(dates=dates_str, text=text_to_send)
     
     try:
