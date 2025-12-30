@@ -1,7 +1,9 @@
 Analyse ce document et extrais: Institution, Objet, Date.
 
-Sources disponibles (complémentaires, à croiser):
+Sources (par priorité - vision > OCR > nom fichier):
 {text}
+
+⭐ Privilégie le texte vision sur l'OCR (plus fiable).
 
 Dates candidates: {dates}
 

@@ -375,7 +375,7 @@ def extract_from_pdf(path):
     except:
         return None
 
-def create_searchable_pdf_page(img, vision_description=None):
+def create_searchable_pdf_page(img):
     """Crée une page PDF avec image visible et couche OCR invisible."""
     try:
         pdf_img = BytesIO()
@@ -398,16 +398,6 @@ def create_searchable_pdf_page(img, vision_description=None):
                     page_img = reader_img.pages[0]
                     page_ocr = reader_ocr.pages[0]
                     
-                    if vision_description:
-                        vision_pdf = pytesseract.image_to_pdf_or_hocr(
-                            Image.new('L', (100, 100), color=255),
-                            extension='pdf'
-                        )
-                        if vision_pdf:
-                            reader_vision = PdfReader(BytesIO(vision_pdf))
-                            if reader_vision.pages:
-                                page_ocr = reader_vision.pages[0]
-                    
                     page_img.merge_page(page_ocr)
                     writer.add_page(page_img)
                     
@@ -424,7 +414,7 @@ def create_searchable_pdf_page(img, vision_description=None):
         img.convert('RGB').save(pdf_out, format='PDF')
         return pdf_out.getvalue()
 
-def ocr_pdf(path, vision_description=None):
+def ocr_pdf(path):
     """OCR un PDF et retourne (texte, chemin PDF searchable)."""
     try:
         full_text = ""
@@ -465,11 +455,7 @@ def ocr_pdf(path, vision_description=None):
             text = pytesseract.image_to_string(img, lang="fra")
             full_text += text + "\n"
             
-            vision_desc = vision_description if img_idx == 0 and vision_description else None
-            if vision_desc:
-                print("      └─ Enrichissement vision", flush=True)
-            
-            pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_desc)
+            pdf_bytes = create_searchable_pdf_page(img)
             page_pdfs.append(pdf_bytes)
         
         if not full_text:
@@ -495,7 +481,7 @@ def ocr_pdf(path, vision_description=None):
     except:
         return None, None
 
-def extract_from_image(path, vision_description=None):
+def extract_from_image(path):
     """Extrait texte d'une image et génère un PDF searchable."""
     try:
         img = Image.open(path)
@@ -513,10 +499,7 @@ def extract_from_image(path, vision_description=None):
         img = preprocess_image_for_ocr(img)
         text = pytesseract.image_to_string(img, lang="fra")
         
-        if vision_description:
-            print("      └─ Enrichissement vision", flush=True)
-        
-        pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_description)
+        pdf_bytes = create_searchable_pdf_page(img)
         if pdf_bytes:
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
                 tmp.write(pdf_bytes)
@@ -556,7 +539,7 @@ def extract_from_xlsx(path):
 # ========== EXTRACTION DATES ==========
 
 def extract_dates(text):
-    """Extrait la première date valide au format YYYY-MM."""
+    """Extrait les dates valides au format YYYY-MM (max 5 candidates)."""
     if not text:
         return []
     
@@ -565,68 +548,84 @@ def extract_dates(text):
     max_year = current_year + 1
     dates = []
     
-    # Format 1: Mois nommés (prioritaire)
+    # Dictionnaire des mois (complet + abrégés)
     month_names = {
-        "janvier": "01", "février": "02", "mars": "03", "avril": "04",
-        "mai": "05", "juin": "06", "juillet": "07", "août": "08",
-        "septembre": "09", "octobre": "10", "novembre": "11", "décembre": "12",
+        # Français complet
+        "janvier": "01", "février": "02", "fevrier": "02", "mars": "03", "avril": "04",
+        "mai": "05", "juin": "06", "juillet": "07", "août": "08", "aout": "08",
+        "septembre": "09", "octobre": "10", "novembre": "11", "décembre": "12", "decembre": "12",
+        # Français abrégé
+        "janv": "01", "jan": "01", "fév": "02", "fev": "02", "févr": "02", "fevr": "02",
+        "avr": "04", "juil": "07", "juill": "07", "sept": "09", "oct": "10", "nov": "11", "déc": "12", "dec": "12",
+        # Anglais complet
         "january": "01", "february": "02", "march": "03", "april": "04",
         "may": "05", "june": "06", "july": "07", "august": "08",
-        "september": "09", "october": "10", "november": "11", "december": "12"
+        "september": "09", "october": "10", "november": "11", "december": "12",
+        # Anglais abrégé
+        "feb": "02", "mar": "03", "apr": "04", "jun": "06", "jul": "07", "aug": "08", "sep": "09"
     }
+    
+    def add_date(year, month):
+        """Ajoute une date si valide et non dupliquée."""
+        year_int = int(year)
+        month_int = int(month)
+        if min_year <= year_int <= max_year and 1 <= month_int <= 12:
+            date_str = f"{year}-{str(month_int).zfill(2)}"
+            if date_str not in dates:
+                dates.append(date_str)
+    
+    # Format 1: "JJ mois YYYY" ou "JJ mois. YYYY" (ex: "15 mars 2024", "15 janv. 2024")
     for month_name, month_num in month_names.items():
-        pattern = rf"\b(\d{{1,2}})\s+{month_name}\s+(\d{{4}})\b"
-        matches_named = re.findall(pattern, text, re.IGNORECASE)
-        for day, year in matches_named:
+        pattern = rf"\b(\d{{1,2}})\s+{month_name}\.?\s+(\d{{4}})\b"
+        for day, year in re.findall(pattern, text, re.IGNORECASE):
             day_int = int(day)
-            year_int = int(year)
-            if 1 <= day_int <= 31 and min_year <= year_int <= max_year:
-                dates.append(f"{year}-{month_num}")
-                break
-        if dates:
-            break
+            if 1 <= day_int <= 31:
+                add_date(year, month_num)
     
-    # Format 2: YYYY-MM
-    if not dates:
-        matches_iso = re.findall(r"\b(\d{4})-(\d{2})(?:-\d{2})?\b", text)
-        for year, month in matches_iso:
-            year_int = int(year)
-            month_int = int(month)
-            if min_year <= year_int <= max_year and 1 <= month_int <= 12:
-                dates.append(f"{year}-{month}")
+    # Format 2: "mois YYYY" sans jour (ex: "mars 2024", "décembre 2023")
+    for month_name, month_num in month_names.items():
+        pattern = rf"\b{month_name}\.?\s+(\d{{4}})\b"
+        for year in re.findall(pattern, text, re.IGNORECASE):
+            add_date(year, month_num)
     
-    # Format 3: DD/MM/YYYY
-    if not dates:
-        matches_slash = re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
-        for day, month, year in matches_slash:
-            day_int = int(day)
-            month_int = int(month)
-            year_int = int(year)
-            if 1 <= day_int <= 31 and 1 <= month_int <= 12 and min_year <= year_int <= max_year:
-                month_str = str(month_int).zfill(2)
-                dates.append(f"{year}-{month_str}")
+    # Format 3: YYYY-MM ou YYYY-MM-DD (ISO)
+    for year, month in re.findall(r"\b(\d{4})-(\d{2})(?:-\d{2})?\b", text):
+        add_date(year, month)
     
-    # Format 4: YYYY/MM/DD
-    if not dates:
-        matches_slash_reverse = re.findall(r"\b(\d{4})/(\d{1,2})/(\d{1,2})\b", text)
-        for year, month, day in matches_slash_reverse:
-            day_int = int(day)
-            month_int = int(month)
-            year_int = int(year)
-            if 1 <= day_int <= 31 and 1 <= month_int <= 12 and min_year <= year_int <= max_year:
-                month_str = str(month_int).zfill(2)
-                dates.append(f"{year}-{month_str}")
+    # Format 4: DD/MM/YYYY
+    for day, month, year in re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            add_date(year, month)
     
-    # Format 5: YYYY seul (fallback)
+    # Format 5: DD.MM.YYYY (format européen avec points)
+    for day, month, year in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            add_date(year, month)
+    
+    # Format 6: DD-MM-YYYY (format avec tirets)
+    for day, month, year in re.findall(r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            add_date(year, month)
+    
+    # Format 7: YYYY/MM/DD
+    for year, month, day in re.findall(r"\b(\d{4})/(\d{1,2})/(\d{1,2})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            add_date(year, month)
+    
+    # Format 8: YYYY seul (fallback, moins précis)
     if not dates:
-        matches_year = re.findall(r"\b(19|20)(\d{2})\b", text)
-        for century, year_suffix in matches_year:
-            full_year_int = int(century + year_suffix)
+        for century, year_suffix in re.findall(r"\b(19|20)(\d{2})\b", text):
+            full_year = century + year_suffix
+            full_year_int = int(full_year)
             if min_year <= full_year_int <= max_year:
-                dates.append(century + year_suffix)
-                break
+                if full_year not in dates:
+                    dates.append(full_year)
     
-    return list(dict.fromkeys(dates[:1]))
+    return dates[:5]  # Maximum 5 dates candidates
 
 # ========== ANALYSE OLLAMA ==========
 
@@ -1034,22 +1033,6 @@ def main():
             
             dates = extract_dates(combined_text)
             print(f"      ✅ {len(dates)} date(s) trouvée(s): {dates if dates else 'aucune'}")
-            
-            # RE-GÉNÉRER les PDF OCRisés avec la description vision intégrée
-            if vision_analysis:
-                print("  🔄 [PDF] Régénération avec enrichissement vision...")
-                try:
-                    if ext == ".pdf":
-                        # Régénérer le PDF avec vision intégrée
-                        text_primary, tmp_pdf = ocr_pdf(file_path, vision_description=vision_analysis)
-                        print("      ✅ PDF enrichi")
-                    elif ext in [".png", ".jpg", ".jpeg"]:
-                        # Régénérer le PDF image avec vision intégrée
-                        text_primary, tmp_pdf = extract_from_image(file_path, vision_description=vision_analysis)
-                        print("      ✅ PDF enrichi")
-                except Exception as e:
-                    print(f"      ❌ Erreur: {e}")
-                    # Continuer avec les PDFs générés précédemment
             
             # Analyse Ollama passe 1 (avec analyse vision optionnelle)
             print("  🧠 [OLLAMA] Analyse IA (passe 1)...")

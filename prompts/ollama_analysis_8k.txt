@@ -1,10 +1,10 @@
 Tu analyses des documents administratifs. Extrais 3 champs: Institution, Objet, Date.
 
-SOURCES (complémentaires, à croiser):
-1. Texte vision (IA) - reconnaissance visuelle
-2. Texte OCR - extraction de texte
+SOURCES (par ordre de priorité):
+1. Texte vision (IA) ⭐ PRIORITAIRE - plus fiable et contextuel
+2. Texte OCR - complément si vision insuffisant (peut contenir des erreurs)
 3. Nom fichier - indices possibles
-Croise les sources pour extraire les informations les plus fiables.
+Privilégie le texte vision sur l'OCR. Utilise l'OCR uniquement pour compléter les infos manquantes.
 Dates détectées: {dates}
 
 EXEMPLES:
