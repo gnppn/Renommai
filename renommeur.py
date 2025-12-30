@@ -1071,6 +1071,15 @@ def main():
                     shutil.copy2(tmp_pdf, str(failure / pdf_failure_name))
                     print(f"  └─ PDF OCRisé copié: {pdf_failure_name}")
                     _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
+                # Exporter le texte vision dans un fichier .txt
+                if vision_analysis:
+                    txt_failure_name = generate_name(inst or "inconnu", obj or "inconnu", failure_date, ".txt")
+                    txt_path = failure / txt_failure_name
+                    with open(txt_path, 'w', encoding='utf-8') as f:
+                        f.write(f"=== TEXTE EXTRAIT PAR VISION ===\n\n{vision_analysis}\n")
+                        if text_primary:
+                            f.write(f"\n\n=== TEXTE OCR (TESSERACT) ===\n\n{text_primary}\n")
+                    print(f"  └─ Texte vision exporté: {txt_failure_name}")
                 with open(log_path, 'a', newline='', encoding='utf-8') as f:
                     csv.writer(f).writerow([file_path.name, "Échec", failure_name, inst, obj, date])
                 continue
@@ -1085,6 +1094,16 @@ def main():
                 pdf_name = generate_name(inst, obj, date, ".pdf")
                 shutil.copy2(tmp_pdf, str(export / pdf_name))
                 _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
+            
+            # Exporter le texte vision dans un fichier .txt
+            if vision_analysis:
+                txt_name = generate_name(inst, obj, date, ".txt")
+                txt_path = export / txt_name
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(f"=== TEXTE EXTRAIT PAR VISION ===\n\n{vision_analysis}\n")
+                    if text_primary:
+                        f.write(f"\n\n=== TEXTE OCR (TESSERACT) ===\n\n{text_primary}\n")
+                print(f"  └─ Texte vision exporté: {txt_name}")
             
             print(f"  🎉 EXPORTÉ: {new_name}")
             with open(log_path, 'a', newline='', encoding='utf-8') as f:
