@@ -787,19 +787,22 @@ def parse_analysis(text, first_page_text=None):
     for line in text.splitlines():
         line_lower = line.lower()
         
-        # Institution
-        if line_lower.startswith("institution variante"):
-            value = line.split(":", 1)[1].strip() if ":" in line else ""
-            value = re.sub(r'\s*[\(\[].*$', '', value).strip()
-            if value:
-                inst_variants.append(value)
+        # Institution - accepter "Institution 1:", "Institution variante 1:", etc.
+        if line_lower.startswith("institution"):
+            # Ignorer les lignes qui ne contiennent pas de valeur (juste un numéro)
+            if ":" in line:
+                value = line.split(":", 1)[1].strip()
+                value = re.sub(r'\s*[\(\[].*$', '', value).strip()
+                if value and value.lower() not in ("", "inconnu"):
+                    inst_variants.append(value)
         
-        # Objet
-        elif line_lower.startswith("objet variante"):
-            value = line.split(":", 1)[1].strip() if ":" in line else ""
-            value = re.sub(r'\s*[\(\[].*$', '', value).strip()
-            if value:
-                obj_variants.append(value)
+        # Objet - accepter "Objet 1:", "Objet variante 1:", etc.
+        elif line_lower.startswith("objet"):
+            if ":" in line:
+                value = line.split(":", 1)[1].strip()
+                value = re.sub(r'\s*[\(\[].*$', '', value).strip()
+                if value and value.lower() not in ("", "inconnu"):
+                    obj_variants.append(value)
         
         # Date
         elif line_lower.startswith("date:"):
