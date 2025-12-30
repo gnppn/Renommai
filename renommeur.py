@@ -487,26 +487,15 @@ Texte :
 """
 
 def analyze_ollama(text, dates, model, pass_level="initial"):
-    """Analyse texte avec Ollama - OPTIMISÉ pour 1ère page + sections essentielles."""
+    """Analyse texte avec Ollama - passe la 1ère page COMPLÈTE à Ollama."""
     dates_str = ", ".join(dates) if dates else "aucune"
     
-    # Optimisation: Extraire 1ère page seulement
+    # Extraire 1ère page complète
     first_page_text = extract_first_page(text)
     
-    # Passe 1: Ultra-compact (en-têtes seulement)
-    if pass_level == "initial":
-        essential_text = extract_essential_sections(first_page_text)
-        max_chars = 800  # ~800 chars = très compact
-    else:  # fallback
-        essential_text = first_page_text
-        max_chars = 1200  # ~1200 chars = légèrement plus de contexte
-    
-    # Créer prompt optimisé
-    text_to_send = essential_text[:max_chars]
+    # Créer prompt avec 1ère page complète
+    text_to_send = first_page_text
     prompt = PROMPT_TEMPLATE.format(dates=dates_str, text=text_to_send)
-    
-    if pass_level == "fallback":
-        prompt += "\n\nNote: Analyse secondaire. Vous pouvez utiliser plus de contexte si disponible."
     
     try:
         response = ollama.generate(model=model, prompt=prompt, stream=False)
