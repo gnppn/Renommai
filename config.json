@@ -1,5 +1,5 @@
 {
-  "SOURCE_DIR": "/home/guenael/SynologyDrive/Drive/Développement/RenAIme Fichiers test",
+  "SOURCE_DIR": "/home/guenael/SynologyDrive/Drive/Développement/Renommai Fichiers test",
   "EXPORT_DIR": "Export",
   "FAILURE_DIR": "Echec",
   "OLLAMA_MODEL": "mistral:7b-instruct-v0.3-q4_K_M"
