@@ -1,4 +1,4 @@
-# RenAIme
+# Renommai
 
 ⚠️ Petit projet de vacances **vibecodé**. N'en attendez rien de fiable.
 
