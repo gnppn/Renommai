@@ -17,6 +17,7 @@ import atexit
 import base64
 from pathlib import Path
 from datetime import datetime
+from io import BytesIO
 
 import pdfplumber
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
@@ -69,23 +70,22 @@ _temp_files = []
 def cleanup_temp_files():
     """Nettoie tous les fichiers temporaires créés lors de l'exécution."""
     global _temp_files
-    for tmp in _temp_files[:]:  # Copie pour éviter modifications pendant l'itération
+    for tmp in _temp_files[:]:
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
-                print(f"  [NETTOYAGE] Fichier temporaire supprimé: {tmp}")
         except Exception as e:
-            print(f"  [ERREUR NETTOYAGE] {tmp}: {e}")
+            pass
         finally:
             _temp_files.remove(tmp) if tmp in _temp_files else None
 
 def signal_handler(signum, frame):
     """Gestionnaire d'interruption (Ctrl+C, SIGTERM)."""
     signal_name = signal.Signals(signum).name
-    print(f"\n\n[⚠️  INTERRUPTION] Signal {signal_name} reçu - Nettoyage en cours...")
+    print(f"\n\n⚠️  INTERRUPTION ({signal_name}) - Nettoyage en cours...")
     cleanup_temp_files()
-    print("[✓] Nettoyage terminé. Au revoir!")
-    sys.exit(130)  # Code d'interruption standard
+    print("✅ Nettoyage terminé. Au revoir!")
+    sys.exit(130)
 
 # Enregistrer les gestionnaires de signaux
 signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
@@ -117,90 +117,75 @@ def check_deps():
         except:
             missing.append(pkg)
     if missing:
-        print(f"[ERREUR] Dépendances manquantes: {', '.join(missing)}")
+        print(f"❌ Dépendances manquantes: {', '.join(missing)}")
         sys.exit(1)
 
 def ensure_models():
-    """Vérifie et télécharge les modèles Ollama manquants (llava + llama3)."""
+    """Vérifie et télécharge les modèles Ollama manquants."""
     required_models = ["llava:latest", "llama3:8b-instruct-q4_0"]
     
-    print("\n[MODÈLES] Vérification des modèles Ollama...")
+    print("\n🤖 Vérification des modèles Ollama...")
     
     try:
-        # Récupérer liste des modèles disponibles
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
         available_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
         
-        print(f"  Modèles disponibles: {available_models if available_models else 'aucun'}")
+        if available_models:
+            print("      ✅ Modèles disponibles")
+        else:
+            print("      ⚠️  Aucun modèle")
         
         for model in required_models:
-            # Normaliser le nom (ignorer la version pour la comparaison)
-            base_model = model.split(':')[0]  # 'llava' ou 'llama3'
-            
-            # Vérifier si le modèle est présent
+            base_model = model.split(':')[0]
             model_found = any(base_model in m for m in available_models)
             
             if not model_found:
-                print(f"  [⬇️  TÉLÉCHARGEMENT] {model}...")
+                print(f"      ⬇️  Téléchargement {model}...")
                 try:
                     subprocess.run(['ollama', 'pull', model], check=True)
-                    print(f"  ✓ {model} téléchargé avec succès")
+                    print(f"      ✅ {model} téléchargé")
                 except subprocess.CalledProcessError as e:
-                    print(f"  ✗ Erreur lors du téléchargement de {model}: {e}")
-                    print(f"     Téléchargez manuellement: ollama pull {model}")
-            else:
-                print(f"  ✓ {model} déjà présent")
+                    print(f"      ❌ Échec: {e}")
+                    print(f"         Téléchargez manuellement: ollama pull {model}")
         
-        print("[✓] Vérification des modèles terminée\n")
+        print()
     
     except FileNotFoundError:
-        print("  ✗ ERREUR: Ollama n'est pas installé ou pas dans le PATH")
-        print("     Installez Ollama: https://ollama.ai")
+        print("      ❌ Ollama non installé")
+        print("         https://ollama.ai")
         sys.exit(1)
     except Exception as e:
-        print(f"  ✗ Erreur lors de la vérification des modèles: {e}")
-        print("     Vous pouvez continuer, mais certains modèles pourraient manquer")
+        print(f"      ⚠️  Erreur: {e}")
 
 # ========== EXTRACTION TEXTE ==========
 
 def preprocess_image_for_ocr(img):
-    """Prétraitement OCR - meilleures pratiques pour contraste difficile."""
-    # Conversion niveaux de gris
+    """Prétraitement image pour améliorer l'OCR."""
     img = img.convert('L')
-    
-    # Nettoyage du bruit avec filtre médian
     img = img.filter(ImageFilter.MedianFilter(size=3))
     
-    # Si cv2 disponible : utiliser CLAHE + Otsu + morphologie (meilleure qualité)
     if CV2_AVAILABLE:
-        # CLAHE pour contraste difficile
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_GRAY2BGR) if len(np.array(img).shape) == 2 else np.array(img)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         img_cv_gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
         img_cv_gray = clahe.apply(img_cv_gray)
         img = Image.fromarray(img_cv_gray)
         
-        # Renforcement du contraste global
         img = ImageEnhance.Contrast(img).enhance(1.5)
         
-        # Threshold adaptatif (Otsu)
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_GRAY2BGR) if len(np.array(img).shape) == 2 else np.array(img)
         img_cv_gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY) if len(img_cv.shape) == 3 else img_cv
         _, img_cv_gray = cv2.threshold(img_cv_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         img = Image.fromarray(img_cv_gray)
         
-        # Morphologie : Erosion + Dilatation
         img_cv = np.array(img)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         img_cv = cv2.morphologyEx(img_cv, cv2.MORPH_CLOSE, kernel)
         img = Image.fromarray(img_cv)
     else:
-        # Fallback sans cv2 : utiliser Pillow uniquement
         img = ImageEnhance.Contrast(img).enhance(1.5)
     
-    # Nettoyage final et netteté
     img = img.filter(ImageFilter.SHARPEN)
-    
     return img
 
 def extract_from_pdf(path):
@@ -213,47 +198,29 @@ def extract_from_pdf(path):
         return None
 
 def create_searchable_pdf_page(img, vision_description=None):
-    """Crée une page PDF searchable: image visible + couche OCR texte invisible.
-    
-    Si vision_description fournie (de llava), l'ajoute comme préambule à la couche texte.
-    
-    Approche:
-    1. Générer image→PDF (layer image)
-    2. Générer image→PDF+OCR (layer texte) + préambule vision optionnel
-    3. Fusionner les deux layers
-    """
+    """Crée une page PDF avec image visible et couche OCR invisible."""
     try:
-        from io import BytesIO
-        
-        # 1. Créer PDF image simple (fond visible)
         pdf_img = BytesIO()
         img_rgb = img.convert('RGB')
         img_rgb.save(pdf_img, format='PDF')
         pdf_img.seek(0)
         
-        # 2. Générer PDF OCR avec tesseract (couche texte caché)
         pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img, extension='pdf')
         if not pdf_ocr_bytes:
-            # Fallback: retourner juste l'image
             return pdf_img.getvalue()
         
-        # 3. Fusionner les deux couches (image + texte)
         if PYPDF_AVAILABLE:
             try:
-                from io import BytesIO
                 reader_img = PdfReader(pdf_img)
                 reader_ocr = PdfReader(BytesIO(pdf_ocr_bytes))
                 
                 writer = PdfWriter()
                 
-                # Obtenir les pages
                 if reader_img.pages and reader_ocr.pages:
                     page_img = reader_img.pages[0]
                     page_ocr = reader_ocr.pages[0]
                     
-                    # Ajouter description vision si disponible (améliore searchabilité)
                     if vision_description:
-                        # Créer une page de texte supplémentaire avec la description vision
                         vision_pdf = pytesseract.image_to_pdf_or_hocr(
                             Image.new('L', (100, 100), color=255),
                             extension='pdf'
@@ -261,11 +228,8 @@ def create_searchable_pdf_page(img, vision_description=None):
                         if vision_pdf:
                             reader_vision = PdfReader(BytesIO(vision_pdf))
                             if reader_vision.pages:
-                                # Essayer d'ajouter la vision au PDF OCR
                                 page_ocr = reader_vision.pages[0]
                     
-                    # Fusionner: mettre la couche OCR sur l'image
-                    # (Le texte du OCR sera invisible mais searchable)
                     page_img.merge_page(page_ocr)
                     writer.add_page(page_img)
                     
@@ -273,29 +237,22 @@ def create_searchable_pdf_page(img, vision_description=None):
                     writer.write(output)
                     return output.getvalue()
             except Exception as e:
-                # Fallback sur PDF OCR simple
                 return pdf_ocr_bytes
         
-        # Sans PyPDF2, retourner PDF OCR (avec texte caché par tesseract)
         return pdf_ocr_bytes
     
     except Exception as e:
-        # Fallback: juste l'image en PDF
         pdf_out = BytesIO()
         img.convert('RGB').save(pdf_out, format='PDF')
         return pdf_out.getvalue()
 
 def ocr_pdf(path, vision_description=None):
-    """OCR un PDF et retourne le texte + chemin temp PDF searchable.
-    
-    Si vision_description fournie (de llava), l'enrichit dans le PDF.
-    """
+    """OCR un PDF et retourne (texte, chemin PDF searchable)."""
     try:
         full_text = ""
         page_pdfs = []
         images = []
         
-        # Essai 1: Utiliser pdfplumber (rapide)
         try:
             with pdfplumber.open(path) as pdf:
                 if pdf.pages:
@@ -309,16 +266,13 @@ def ocr_pdf(path, vision_description=None):
         except:
             images = []
         
-        # Essai 2: Fallback avec pdf2image si peu/pas d'images extraites
         if (not images or len(images) < 2) and PDF2IMAGE_AVAILABLE:
             try:
                 images = convert_from_path(str(path), dpi=300)
             except:
                 pass
         
-        # Traiter les images
         for img_idx, img in enumerate(images):
-            # Autorotation
             try:
                 osd = pytesseract.image_to_osd(img)
                 m = re.search(r"Rotate:\s*(\d+)", osd)
@@ -329,17 +283,13 @@ def ocr_pdf(path, vision_description=None):
             except:
                 pass
             
-            # Prétraitement OCR avancé
             img = preprocess_image_for_ocr(img)
-            
             text = pytesseract.image_to_string(img, lang="fra")
             full_text += text + "\n"
             
-            # Créer PDF searchable: image + couche OCR texte
-            # Ajouter description vision uniquement pour la 1ère page
             vision_desc = vision_description if img_idx == 0 and vision_description else None
             if vision_desc:
-                print(f"      └─ Enrichissement avec description vision (searchable)", flush=True)
+                print("      └─ Enrichissement vision", flush=True)
             
             pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_desc)
             page_pdfs.append(pdf_bytes)
@@ -347,15 +297,13 @@ def ocr_pdf(path, vision_description=None):
         if not full_text:
             return None, None
         
-        # Créer PDF temporaire
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             tmp_path = tmp.name
-            _temp_files.append(tmp_path)  # Enregistrer pour nettoyage
+            _temp_files.append(tmp_path)
             if PYPDF_AVAILABLE and page_pdfs:
                 writer = PdfWriter()
                 for pb in page_pdfs:
                     if pb:
-                        from io import BytesIO
                         reader = PdfReader(BytesIO(pb))
                         for p in reader.pages:
                             writer.add_page(p)
@@ -370,14 +318,10 @@ def ocr_pdf(path, vision_description=None):
         return None, None
 
 def extract_from_image(path, vision_description=None):
-    """Extrait texte d'une image et génère un PDF searchable (image + OCR texte).
-    
-    Si vision_description fournie (de llava), l'enrichit dans le PDF.
-    """
+    """Extrait texte d'une image et génère un PDF searchable."""
     try:
         img = Image.open(path)
         
-        # Autorotation
         try:
             osd = pytesseract.image_to_osd(img)
             m = re.search(r"Rotate:\s*(\d+)", osd)
@@ -388,22 +332,18 @@ def extract_from_image(path, vision_description=None):
         except:
             pass
         
-        # Prétraitement OCR avancé
         img = preprocess_image_for_ocr(img)
-        
         text = pytesseract.image_to_string(img, lang="fra")
         
-        # Générer PDF searchable: image + couche OCR texte
-        # Enrichir avec description vision si disponible
         if vision_description:
-            print(f"      └─ Enrichissement avec description vision (searchable)", flush=True)
+            print("      └─ Enrichissement vision", flush=True)
         
         pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_description)
         if pdf_bytes:
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
                 tmp.write(pdf_bytes)
                 tmp_path = tmp.name
-                _temp_files.append(tmp_path)  # Enregistrer pour nettoyage
+                _temp_files.append(tmp_path)
             return text, tmp_path
         
         return text, None
@@ -438,34 +378,46 @@ def extract_from_xlsx(path):
 # ========== EXTRACTION DATES ==========
 
 def extract_dates(text):
-    """Extrait dates YYYY-MM, valide YYYY présent, fiable et < 20 ans. Formats: YYYY-MM, DD/MM/YYYY, mois nommés."""
+    """Extrait la première date valide au format YYYY-MM."""
     if not text:
         return []
     
     current_year = datetime.now().year
-    min_year = current_year - 20  # Doit dater de moins de 20 ans
-    max_year = current_year + 1    # Permet documents futurs
+    min_year = current_year - 20
+    max_year = current_year + 1
     dates = []
     
-    # Format 1: YYYY-MM (priorité) - doit être complet
-    matches_iso = re.findall(r"\b(\d{4})-(\d{2})(?:-\d{2})?\b", text)
-    for year, month in matches_iso:
-        year_int = int(year)
-        month_int = int(month)
-        # Valider: année dans les 20 dernières années, mois 01-12
-        if min_year <= year_int <= max_year and 1 <= month_int <= 12:
-            dates.append(f"{year}-{month}")
+    # Format 1: Mois nommés (prioritaire)
+    month_names = {
+        "janvier": "01", "février": "02", "mars": "03", "avril": "04",
+        "mai": "05", "juin": "06", "juillet": "07", "août": "08",
+        "septembre": "09", "octobre": "10", "novembre": "11", "décembre": "12",
+        "january": "01", "february": "02", "march": "03", "april": "04",
+        "may": "05", "june": "06", "july": "07", "august": "08",
+        "september": "09", "october": "10", "november": "11", "december": "12"
+    }
+    for month_name, month_num in month_names.items():
+        pattern = rf"\b(\d{{1,2}})\s+{month_name}\s+(\d{{4}})\b"
+        matches_named = re.findall(pattern, text, re.IGNORECASE)
+        for day, year in matches_named:
+            day_int = int(day)
+            year_int = int(year)
+            if 1 <= day_int <= 31 and min_year <= year_int <= max_year:
+                dates.append(f"{year}-{month_num}")
+                break
+        if dates:
+            break
     
-    # Format 2: YYYY seul (fallback) - année valide sans mois, dans les 20 ans
+    # Format 2: YYYY-MM
     if not dates:
-        matches_year = re.findall(r"\b(19|20)(\d{2})\b", text)
-        for century, year_suffix in matches_year:
-            full_year_int = int(century + year_suffix)
-            if min_year <= full_year_int <= max_year:
-                dates.append(century + year_suffix)
-                break  # Prendre seulement première année trouvée
+        matches_iso = re.findall(r"\b(\d{4})-(\d{2})(?:-\d{2})?\b", text)
+        for year, month in matches_iso:
+            year_int = int(year)
+            month_int = int(month)
+            if min_year <= year_int <= max_year and 1 <= month_int <= 12:
+                dates.append(f"{year}-{month}")
     
-    # Format 3: DD/MM/YYYY, D/M/YYYY → convertir en YYYY-MM si pas trouvé
+    # Format 3: DD/MM/YYYY
     if not dates:
         matches_slash = re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
         for day, month, year in matches_slash:
@@ -476,7 +428,7 @@ def extract_dates(text):
                 month_str = str(month_int).zfill(2)
                 dates.append(f"{year}-{month_str}")
     
-    # Format 4: YYYY/MM/DD → convertir en YYYY-MM si pas trouvé
+    # Format 4: YYYY/MM/DD
     if not dates:
         matches_slash_reverse = re.findall(r"\b(\d{4})/(\d{1,2})/(\d{1,2})\b", text)
         for year, month, day in matches_slash_reverse:
@@ -487,71 +439,36 @@ def extract_dates(text):
                 month_str = str(month_int).zfill(2)
                 dates.append(f"{year}-{month_str}")
     
-    # Format 5: Mois nommés (ex: "28 avril 2024") → YYYY-MM si pas trouvé
+    # Format 5: YYYY seul (fallback)
     if not dates:
-        month_names = {
-            "janvier": "01", "février": "02", "mars": "03", "avril": "04",
-            "mai": "05", "juin": "06", "juillet": "07", "août": "08",
-            "septembre": "09", "octobre": "10", "novembre": "11", "décembre": "12",
-            "january": "01", "february": "02", "march": "03", "april": "04",
-            "may": "05", "june": "06", "july": "07", "august": "08",
-            "september": "09", "october": "10", "november": "11", "december": "12"
-        }
-        for month_name, month_num in month_names.items():
-            pattern = rf"(\d{{1,2}})\s+{month_name}\s+(\d{{4}})"
-            matches_named = re.findall(pattern, text, re.IGNORECASE)
-            for day, year in matches_named:
-                day_int = int(day)
-                year_int = int(year)
-                if 1 <= day_int <= 31 and min_year <= year_int <= max_year:
-                    dates.append(f"{year}-{month_num}")
-                    break
-            if dates:
+        matches_year = re.findall(r"\b(19|20)(\d{2})\b", text)
+        for century, year_suffix in matches_year:
+            full_year_int = int(century + year_suffix)
+            if min_year <= full_year_int <= max_year:
+                dates.append(century + year_suffix)
                 break
     
-    return list(dict.fromkeys(dates[:1]))  # Retourne max 1 date (première trouvée)
+    return list(dict.fromkeys(dates[:1]))
 
 # ========== ANALYSE OLLAMA ==========
 
 def extract_first_page(text):
-    """Extrait la première page seulement (heuristique: ~3500 lignes pour 4K context window)."""
+    """Extrait les ~3500 premiers caractères (première page)."""
     lines = text.split('\n')
     page_text = []
     char_count = 0
     
     for line in lines:
-        if char_count > 3500:  # ~1ère page max avec fenêtre 4K
+        if char_count > 3500:
             break
         page_text.append(line)
         char_count += len(line) + 1
     
     return '\n'.join(page_text)
 
-def extract_essential_sections(text):
-    """Extrait sections critiques : en-têtes, dates, institutions."""
-    # Garder que les 500 premiers caractères (titre/en-tête) + dernières 300 (footer)
-    lines = text.split('\n')[:30]  # ~30 premières lignes = en-tête
-    essential = '\n'.join(lines)
-    
-    # Ajouter les dates trouvées (contexte)
-    date_pattern = r"\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b"
-    dates_in_text = re.findall(date_pattern, text[:1500])
-    if dates_in_text:
-        essential += f"\n\nDates trouvées: {', '.join(set(dates_in_text))}"
-    
-    return essential
-
 def analyze_llava(image_path, model="llava:latest"):
-    """Analyse la PREMIÈRE PAGE d'un document avec llava et extrait TOUT le texte brut visible.
-    
-    Utilisé comme passe pré-analytique avant ollama. Extrait:
-    - Tout le texte brut visible sur l'image
-    - L'institution/émetteur identifié
-    - Le type de document
-    - Les dates visibles
-    """
+    """Extrait le texte brut visible sur une image via Llava."""
     try:
-        # Lire l'image en base64
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
         
@@ -623,6 +540,10 @@ INSTRUCTIONS DÉTAILLÉES:
    - Format attendu : YYYY-MM (année-mois)
    - Format accepté : YYYY (année seule) en dernier recours
    - Candidates prioritaires : {dates}
+   - ATTENTION aux dates avec mois nommés (ex: "23 janvier 2012"):
+     * Le PREMIER nombre (23) est le JOUR, PAS l'année
+     * Le DERNIER nombre à 4 chiffres (2012) est l'ANNÉE
+     * Donc "23 janvier 2012" = 2012-01, PAS 2023-01
    - Si aucune date fiable, retourne "inconnu"
 
 FORMAT DE SORTIE STRICT (chaque ligne sur une nouvelle ligne):
@@ -648,45 +569,29 @@ Texte du document:
 """
 
 def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial", original_filename=None):
-    """Analyse texte avec Ollama en combinant toutes les sources d'information.
-    
-    Sources utilisées:
-    - text: Texte extrait par Tesseract (OCR)
-    - dates: Dates candidates détectées
-    - vision_analysis: Texte brut extrait par Llava (vision IA)
-    - original_filename: Nom du fichier original (peut contenir des indices)
-    """
+    """Analyse le texte avec Ollama et retourne Institution, Objet, Date."""
     dates_str = ", ".join(dates) if dates else "aucune"
-    
-    # Extraire 1ère page complète du texte Tesseract
     first_page_text = extract_first_page(text)
     
-    # Construire le texte avec TOUTES les sources d'information
     context_parts = []
     
-    # 1. Nom du fichier original
     if original_filename:
         context_parts.append(f"[NOM FICHIER ORIGINAL]\n{original_filename}")
     
-    # 2. Texte extrait par Llava (vision) - source prioritaire
     if vision_analysis:
         context_parts.append(f"[TEXTE LLAVA (VISION IA)]\n{vision_analysis}")
     
-    # 3. Texte extrait par Tesseract (OCR)
     context_parts.append(f"[TEXTE TESSERACT (OCR)]\n{first_page_text}")
-    
-    # 4. Dates candidates
     context_parts.append(f"[DATES CANDIDATES]\n{dates_str}")
     
     text_to_send = "\n\n".join(context_parts)
-    
     prompt = PROMPT_TEMPLATE.format(dates=dates_str, text=text_to_send)
     
     try:
         response = ollama.generate(model=model, prompt=prompt, stream=False)
         return response.get("response", "").strip()
     except Exception as e:
-        print(f"ERREUR: {e}")
+        print(f"      ❌ Erreur Ollama: {e}")
         return None
 
 
@@ -866,7 +771,7 @@ def main():
         source_dir = choix
     
     if not os.path.isdir(source_dir):
-        print("[ERREUR] Dossier invalide")
+        print("❌ Dossier invalide")
         return
     
     config["SOURCE_DIR"] = source_dir
@@ -879,9 +784,9 @@ def main():
         # Filtrer les modèles llava (utilisés automatiquement pour l'analyse vision)
         models = [m for m in all_models if not m.startswith('llava')]
         if models:
-            print("Modèles Ollama (analyse texte):")
+            print("\n🧠 Modèles Ollama disponibles:")
             for i, m in enumerate(models, 1):
-                print(f"  {i}. {m}")
+                print(f"      {i}. {m}")
             choix = input(f"Choix [{config['OLLAMA_MODEL']}]: ").strip()
             if choix.isdigit() and 1 <= int(choix) <= len(models):
                 config["OLLAMA_MODEL"] = models[int(choix) - 1]
@@ -911,7 +816,9 @@ def main():
             if ext not in [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx"]:
                 continue
             
-            print(f"\n[FILE] {file_path.name}")
+            print(f"\n{'='*60}")
+            print(f"📄 FICHIER: {file_path.name}")
+            print(f"{'='*60}")
             
             # Extraction texte (avec source alternative)
             text_primary = None     # Texte pour analyse initiale
@@ -919,44 +826,44 @@ def main():
             tmp_pdf = None
             
             if ext == ".pdf":
-                print("  [PDF] Extraction texte natif...", end=" ", flush=True)
+                print("  📖 [PDF] Extraction texte natif...", end=" ", flush=True)
                 text_primary = extract_from_pdf(file_path)
                 if text_primary:
-                    print("✓ (natif)")
+                    print("✅ (natif)")
                     text_fallback = text_primary  # Source = texte natif
                 else:
-                    print("✗ (image)")
-                    print("  [OCR] Prétraitement...", end=" ", flush=True)
+                    print("❌ (image)")
+                    print("  🔍 [OCR] Prétraitement Tesseract...", end=" ", flush=True)
                     text_primary, tmp_pdf = ocr_pdf(file_path)
                     text_fallback = None  # Pas de source alternative pour PDF image
                     if tmp_pdf:
-                        print(f"✓ (PDF OCRisé créé)")
+                        print("✅ PDF OCRisé créé")
                     else:
-                        print("✗")
+                        print("❌")
             elif ext in [".png", ".jpg", ".jpeg"]:
-                print("  [OCR] Prétraitement image...", end=" ", flush=True)
+                print("  🖼️  [IMAGE] OCR Tesseract...", end=" ", flush=True)
                 text_primary, tmp_pdf = extract_from_image(file_path)
                 text_fallback = None  # Pas de source alternative pour image
                 if text_primary:
                     if tmp_pdf:
-                        print(f"✓ (Tesseract FRA + PDF OCRisé créé)")
+                        print("✅ PDF OCRisé créé")
                     else:
-                        print("✓ (Tesseract FRA)")
+                        print("✅")
                 else:
-                    print("✗")
+                    print("❌")
             elif ext == ".docx":
-                print("  [DOCX] Extraction texte...", end=" ", flush=True)
+                print("  📝 [DOCX] Extraction texte...", end=" ", flush=True)
                 text_primary = extract_from_docx(file_path)
                 text_fallback = None
-                print("✓" if text_primary else "✗")
+                print("✅" if text_primary else "❌")
             elif ext == ".xlsx":
-                print("  [XLSX] Extraction texte...", end=" ", flush=True)
+                print("  📊 [XLSX] Extraction texte...", end=" ", flush=True)
                 text_primary = extract_from_xlsx(file_path)
                 text_fallback = None
-                print("✓" if text_primary else "✗")
+                print("✅" if text_primary else "❌")
             
             if not text_primary:
-                print("  [ERREUR] Aucun texte détecté")
+                print("  ❌ [ERREUR] Aucun texte détecté")
                 shutil.copy2(str(file_path), str(failure / file_path.name))
                 # Copier aussi le PDF OCRisé s'il existe (pour consultation ultérieure)
                 if tmp_pdf and os.path.exists(tmp_pdf):
@@ -1003,16 +910,16 @@ def main():
             
             # Appeler llava si une image est disponible
             if image_for_vision:
-                print("  [LLAVA] Analyse vision (1ère page)...", end=" ", flush=True)
+                print("  👁️  [LLAVA] Analyse vision 1ère page...")
                 vision_analysis = analyze_llava(image_for_vision, model="llava:latest")
                 if vision_analysis:
-                    print(f"✓ ({len(vision_analysis)} chars)")
+                    print(f"      ✅ {len(vision_analysis)} caractères extraits")
                 else:
-                    print("✗")
+                    print("      ❌ Pas de résultat")
             
             # ========== EXTRACTION DATES (AVEC TESSERACT + LLAVA) ==========
             # Combine Tesseract OCR + description Llava pour meilleure détection
-            print("  [DATES] Recherche (Tesseract + Llava)...", end=" ", flush=True)
+            print("  📅 [DATES] Recherche...")
             # Texte combiné pour recherche de date
             combined_text = text_primary
             if vision_analysis:
@@ -1020,55 +927,54 @@ def main():
                 combined_text = vision_analysis + "\n" + text_primary
             
             dates = extract_dates(combined_text)
-            print(f"{len(dates)} trouvée(s)")
+            print(f"      ✅ {len(dates)} date(s) trouvée(s): {dates if dates else 'aucune'}")
             
             # RE-GÉNÉRER les PDF OCRisés avec la description vision intégrée
             if vision_analysis:
-                print("  [PDF] Régénération avec enrichissement vision...", end=" ", flush=True)
+                print("  🔄 [PDF] Régénération avec enrichissement vision...")
                 try:
                     if ext == ".pdf":
                         # Régénérer le PDF avec vision intégrée
                         text_primary, tmp_pdf = ocr_pdf(file_path, vision_description=vision_analysis)
-                        print("✓")
+                        print("      ✅ PDF enrichi")
                     elif ext in [".png", ".jpg", ".jpeg"]:
                         # Régénérer le PDF image avec vision intégrée
                         text_primary, tmp_pdf = extract_from_image(file_path, vision_description=vision_analysis)
-                        print("✓")
+                        print("      ✅ PDF enrichi")
                 except Exception as e:
-                    print(f"✗ ({e})")
+                    print(f"      ❌ Erreur: {e}")
                     # Continuer avec les PDFs générés précédemment
             
             # Analyse Ollama passe 1 (avec analyse vision optionnelle)
-            print("  [OLLAMA] Passe 1 (initial)...", end=" ", flush=True)
+            print("  🧠 [OLLAMA] Analyse IA (passe 1)...")
             analysis = analyze_ollama(text_primary, dates, config["OLLAMA_MODEL"], 
                                       vision_analysis=vision_analysis, pass_level="initial",
                                       original_filename=file_path.name)
             inst, obj, date, certitude = parse_analysis(analysis, extract_first_page(text_primary))
-            print(f"{'✓' if certitude else '⚠'}")
+            print(f"      {'✅ Confiance haute' if certitude else '⚠️  Confiance basse'}")
             
             # Passe 2 : si certitude insuffisante ET source alternative disponible
             if not certitude and text_fallback:
-                print("  [OLLAMA] Passe 2 (fallback)...", end=" ", flush=True)
+                print("  🧠 [OLLAMA] Analyse IA (passe 2 - fallback)...")
                 analysis2 = analyze_ollama(text_fallback, dates, config["OLLAMA_MODEL"], 
                                           vision_analysis=vision_analysis, pass_level="fallback",
                                           original_filename=file_path.name)
                 inst2, obj2, date2, certitude2 = parse_analysis(analysis2, extract_first_page(text_fallback))
                 if certitude2:
                     inst, obj, date, certitude = inst2, obj2, date2, certitude2
-                    print("✓ → Utilisation résultats fallback")
+                    print("      ✅ Résultats fallback utilisés")
                 else:
-                    print("✗ → Passe 1 conservée")
+                    print("      ❌ Passe 1 conservée")
             
             # Validation
-            print(f"  [PARSE] {inst} | {obj} | {date}", end=" ")
+            print(f"  🏷️  [RÉSULTAT] {inst} | {obj} | {date}")
             missing_field = any(v == "inconnu" for v in [inst, obj, date])
             date_valid = bool(re.match(r"^\d{4}-\d{2}$", date))
             if missing_field or not date_valid:
                 failure_date = date if date_valid else "inconnu"
                 failure_name = generate_name(inst or "inconnu", obj or "inconnu", failure_date, ext)
-                print("✗ (ÉCHEC)")
-                failure_msg = f"{file_path.name} → {failure_name} ({inst} | {obj} | {date})"
-                print(f"  └─ FICHIER REJETÉ: {failure_msg}")
+                print("      ❌ ÉCHEC - Champs manquants ou date invalide")
+                print(f"      └─ Fichier rejeté: {failure_name}")
                 shutil.copy2(str(file_path), str(failure / failure_name))
                 # Copier aussi le PDF OCRisé en cas d'échec (pour consultation ultérieure)
                 if tmp_pdf and os.path.exists(tmp_pdf):
@@ -1079,7 +985,7 @@ def main():
                 with open(log_path, 'a', newline='', encoding='utf-8') as f:
                     csv.writer(f).writerow([file_path.name, "Échec", failure_name, inst, obj, date])
                 continue
-            print("✓ (OK)")
+            print("      ✅ Validation OK")
             
             # Renommage
             new_name = generate_name(inst, obj, date, ext)
@@ -1091,22 +997,21 @@ def main():
                 shutil.copy2(tmp_pdf, str(export / pdf_name))
                 _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
             
-            print(f"  ✅ EXPORTÉ: {new_name}")
+            print(f"  🎉 EXPORTÉ: {new_name}")
             with open(log_path, 'a', newline='', encoding='utf-8') as f:
                 csv.writer(f).writerow([file_path.name, "Succès", new_name, inst, obj, date])
     
     except KeyboardInterrupt:
-        print("\n[⚠️  Interrompu par l'utilisateur]")
+        print("\n\n⚠️  Interrompu par l'utilisateur")
         cleanup_temp_files()
         sys.exit(130)
     except Exception as e:
-        print(f"\n[ERREUR] Erreur inattendue: {e}")
+        print(f"\n❌ Erreur inattendue: {e}")
         cleanup_temp_files()
         raise
     finally:
-        # Nettoyage final des fichiers temporaires
         cleanup_temp_files()
-        print("\n[✓] Exécution terminée.")
+        print("\n✅ Exécution terminée.")
 
 if __name__ == "__main__":
     main()
