@@ -1,0 +1,31 @@
+# RenAIme - Dépendances Python
+# pip install -r requirements.txt
+
+# === DÉPENDANCES OBLIGATOIRES ===
+pdfplumber>=0.10.0          # Extraction texte PDF natif
+Pillow>=10.0.0              # Manipulation d'images
+pytesseract>=0.3.10         # OCR Tesseract (nécessite tesseract-ocr installé sur le système)
+ollama>=0.1.0               # Client API Ollama
+
+# === DÉPENDANCES OPTIONNELLES (recommandées) ===
+pypdf>=3.0.0                # Fusion/manipulation PDF avancée
+python-docx>=1.0.0          # Support fichiers Word (.docx)
+openpyxl>=3.1.0             # Support fichiers Excel (.xlsx)
+pdf2image>=1.16.0           # Conversion PDF en images (nécessite poppler-utils)
+opencv-python>=4.8.0        # Prétraitement image avancé (CLAHE, morphologie)
+numpy>=1.24.0               # Calcul matriciel (requis par opencv)
+
+# === NOTES D'INSTALLATION ===
+# 
+# Tesseract OCR (obligatoire):
+#   Ubuntu/Debian: sudo apt install tesseract-ocr tesseract-ocr-fra
+#   macOS: brew install tesseract tesseract-lang
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#
+# Poppler (pour pdf2image):
+#   Ubuntu/Debian: sudo apt install poppler-utils
+#   macOS: brew install poppler
+#   Windows: https://github.com/osber/poppler-windows
+#
+# Ollama (obligatoire):
+#   https://ollama.ai - Installer puis: ollama pull llava && ollama pull llama3:8b-instruct-q4_0
