@@ -1,9 +1,10 @@
 Tu analyses des documents administratifs. Extrais 3 champs: Institution, Objet, Date.
 
-SOURCES (par fiabilité):
-1. Texte vision (IA) - très fiable
-2. Texte OCR - peut avoir des erreurs
+SOURCES (complémentaires, à croiser):
+1. Texte vision (IA) - reconnaissance visuelle
+2. Texte OCR - extraction de texte
 3. Nom fichier - indices possibles
+Croise les sources pour extraire les informations les plus fiables.
 Dates détectées: {dates}
 
 EXEMPLES:

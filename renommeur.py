@@ -113,50 +113,44 @@ def get_system_power_level():
     else:
         return 'low', ram_gb, vram_gb
 
-def select_llava_model(available_models):
-    """Sélectionne le meilleur modèle Llava selon la puissance du système.
+def select_vision_model(available_models):
+    """Sélectionne le meilleur modèle vision selon la puissance du système.
     
-    Versions Llava (du plus léger au plus lourd):
-    - llava:7b - Le plus léger, pour machines limitées
-    - llava:latest / llava:7b-v1.6 - Version standard
-    - llava:13b - Plus performant, nécessite plus de ressources
-    - llava:34b - Très performant, nécessite beaucoup de ressources
+    Modèles vision selon puissance:
+    - PC faible (low): minicpm-v - Léger et efficace pour OCR
+    - PC moyen/puissant (medium/high): llava-llama3 - Plus performant
     """
     global _selected_llava_model
     
     power_level, ram_gb, vram_gb = get_system_power_level()
     
-    # Filtrer les modèles llava disponibles
-    llava_models = [m for m in available_models if m.startswith('llava')]
+    # Filtrer les modèles vision disponibles
+    vision_models = [m for m in available_models if m.startswith(('llava', 'minicpm-v'))]
     
     # Définir les préférences selon le niveau de puissance
-    if power_level == 'high':
-        # Préférer les modèles plus gros si disponibles
-        preferred = ['llava:34b', 'llava:13b', 'llava:13b-v1.6', 'llava:latest', 'llava:7b-v1.6', 'llava:7b']
-        default_pull = 'llava:13b'
-    elif power_level == 'medium':
-        # Version standard
-        preferred = ['llava:13b', 'llava:latest', 'llava:7b-v1.6', 'llava:7b']
-        default_pull = 'llava:latest'
+    if power_level == 'low':
+        # PC faible: préférer minicpm-v (plus léger)
+        preferred = ['minicpm-v:latest', 'minicpm-v', 'llava-llama3:latest', 'llava-llama3']
+        default_pull = 'minicpm-v:latest'
     else:
-        # Version légère pour machines limitées
-        preferred = ['llava:7b', 'llava:7b-v1.6', 'llava:latest']
-        default_pull = 'llava:7b'
+        # PC moyen/puissant: préférer llava-llama3
+        preferred = ['llava-llama3:latest', 'llava-llama3', 'minicpm-v:latest', 'minicpm-v']
+        default_pull = 'llava-llama3:latest'
     
     # Chercher le meilleur modèle disponible
     for model in preferred:
-        if model in llava_models:
+        if model in vision_models:
             _selected_llava_model = model
             return model, power_level, ram_gb, vram_gb
     
-    # Si aucun llava n'est disponible, on retourne celui à télécharger
+    # Si aucun modèle vision n'est disponible, on retourne celui à télécharger
     _selected_llava_model = default_pull
     return default_pull, power_level, ram_gb, vram_gb
 
-def get_llava_model():
-    """Retourne le modèle Llava sélectionné."""
+def get_vision_model():
+    """Retourne le modèle vision sélectionné."""
     global _selected_llava_model
-    return _selected_llava_model or 'llava:latest'
+    return _selected_llava_model or 'llava-llama3:latest'
 
 def get_model_context_size(model_name):
     """Récupère la taille de contexte d'un modèle Ollama."""
@@ -295,32 +289,32 @@ def ensure_models():
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
         available_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
         
-        # Séparer modèles vision (llava) et texte (autres)
-        text_models = [m for m in available_models if not m.startswith('llava')]
-        llava_models = [m for m in available_models if m.startswith('llava')]
+        # Séparer modèles vision (llava, minicpm-v) et texte (autres)
+        text_models = [m for m in available_models if not m.startswith(('llava', 'minicpm-v'))]
         
         if available_models:
             print("      ✅ Modèles disponibles")
         else:
             print("      ⚠️  Aucun modèle")
         
-        # Sélectionner le modèle llava selon la puissance du PC
-        selected_llava, power_level, ram_gb, vram_gb = select_llava_model(available_models)
+        # Sélectionner le modèle vision selon la puissance du PC
+        selected_vision, power_level, ram_gb, vram_gb = select_vision_model(available_models)
         
         power_icons = {'high': '🚀', 'medium': '💻', 'low': '📱'}
         power_names = {'high': 'Élevée', 'medium': 'Moyenne', 'low': 'Limitée'}
         print(f"      {power_icons[power_level]} Puissance détectée: {power_names[power_level]} (RAM: {ram_gb:.1f}GB, VRAM: {vram_gb:.1f}GB)")
-        print(f"      👁️  Modèle vision sélectionné: {selected_llava}")
+        print(f"      👁️  Modèle vision sélectionné: {selected_vision}")
         
-        # Télécharger llava si absent
-        if not llava_models or selected_llava not in llava_models:
-            print(f"      ⬇️  Téléchargement {selected_llava}...")
+        # Télécharger le modèle vision si absent
+        vision_models = [m for m in available_models if m.startswith(('llava', 'minicpm-v'))]
+        if not vision_models or selected_vision not in vision_models:
+            print(f"      ⬇️  Téléchargement {selected_vision}...")
             try:
-                subprocess.run(['ollama', 'pull', selected_llava], check=True)
-                print(f"      ✅ {selected_llava} téléchargé")
+                subprocess.run(['ollama', 'pull', selected_vision], check=True)
+                print(f"      ✅ {selected_vision} téléchargé")
             except subprocess.CalledProcessError as e:
                 print(f"      ❌ Échec: {e}")
-                print(f"         Téléchargez manuellement: ollama pull {selected_llava}")
+                print(f"         Téléchargez manuellement: ollama pull {selected_vision}")
         
         # Télécharger llama3 seulement si AUCUN modèle texte n'est présent
         if not text_models:
@@ -650,10 +644,10 @@ def extract_first_page(text):
     
     return '\n'.join(page_text)
 
-def analyze_llava(image_path, model=None):
-    """Extrait le texte brut visible sur une image via Llava."""
+def analyze_vision(image_path, model=None):
+    """Extrait le texte brut visible sur une image via le modèle vision."""
     if model is None:
-        model = get_llava_model()
+        model = get_vision_model()
     try:
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
@@ -1019,11 +1013,11 @@ def main():
                 except:
                     image_for_vision = None
             
-            # Appeler llava si une image est disponible
+            # Appeler le modèle vision si une image est disponible
             if image_for_vision:
-                llava_model = get_llava_model()
-                print(f"  👁️  [{llava_model.upper()}] Analyse vision 1ère page...")
-                vision_analysis = analyze_llava(image_for_vision)
+                vision_model = get_vision_model()
+                print(f"  👁️  [{vision_model.upper()}] Analyse vision 1ère page...")
+                vision_analysis = analyze_vision(image_for_vision)
                 if vision_analysis:
                     print(f"      ✅ {len(vision_analysis)} caractères extraits")
                 else:

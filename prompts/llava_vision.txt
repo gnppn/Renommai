@@ -1,9 +1,1 @@
-Lis cette image de document administratif.
-
-Réponds exactement dans ce format:
-
-Institution: [nom de l'organisme visible dans le logo/en-tête, ex: "Edf", "Credit Agricole"]
-Type: [type de document, ex: "Facture", "Releve Bancaire", "Fiche De Paie", "Contrat"]
-Dates: [toutes les dates visibles, ex: "15/03/2024, 01/04/2024"]
-Texte:
-[recopie TOUT le texte visible ligne par ligne, du haut vers le bas, sans résumer]
+What text do you see in this image? Read everything visible.
