@@ -63,6 +63,101 @@ PROMPTS_DIR = SCRIPT_DIR / "prompts"
 # Cache pour la taille de contexte des modèles
 _model_context_cache = {}
 
+# Modèle Llava sélectionné (sera défini par detect_llava_model)
+_selected_llava_model = None
+
+def get_system_power_level():
+    """Détecte la puissance du système et retourne un niveau (low, medium, high).
+    
+    Basé sur:
+    - RAM disponible
+    - Présence et VRAM GPU (si nvidia-smi disponible)
+    """
+    ram_gb = 0
+    vram_gb = 0
+    
+    # Détecter la RAM système
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    # MemTotal en kB
+                    ram_kb = int(line.split()[1])
+                    ram_gb = ram_kb / (1024 * 1024)
+                    break
+    except:
+        ram_gb = 8  # Valeur par défaut
+    
+    # Détecter la VRAM GPU (NVIDIA)
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.total', '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            # Prendre la première GPU, valeur en MB
+            vram_mb = int(result.stdout.strip().split('\n')[0])
+            vram_gb = vram_mb / 1024
+    except:
+        vram_gb = 0  # Pas de GPU NVIDIA ou nvidia-smi non disponible
+    
+    # Déterminer le niveau de puissance
+    # High: >= 16GB RAM et >= 8GB VRAM, ou >= 32GB RAM
+    # Medium: >= 8GB RAM et >= 4GB VRAM, ou >= 16GB RAM
+    # Low: reste
+    
+    if (ram_gb >= 16 and vram_gb >= 8) or ram_gb >= 32 or vram_gb >= 12:
+        return 'high', ram_gb, vram_gb
+    elif (ram_gb >= 8 and vram_gb >= 4) or ram_gb >= 16 or vram_gb >= 6:
+        return 'medium', ram_gb, vram_gb
+    else:
+        return 'low', ram_gb, vram_gb
+
+def select_llava_model(available_models):
+    """Sélectionne le meilleur modèle Llava selon la puissance du système.
+    
+    Versions Llava (du plus léger au plus lourd):
+    - llava:7b - Le plus léger, pour machines limitées
+    - llava:latest / llava:7b-v1.6 - Version standard
+    - llava:13b - Plus performant, nécessite plus de ressources
+    - llava:34b - Très performant, nécessite beaucoup de ressources
+    """
+    global _selected_llava_model
+    
+    power_level, ram_gb, vram_gb = get_system_power_level()
+    
+    # Filtrer les modèles llava disponibles
+    llava_models = [m for m in available_models if m.startswith('llava')]
+    
+    # Définir les préférences selon le niveau de puissance
+    if power_level == 'high':
+        # Préférer les modèles plus gros si disponibles
+        preferred = ['llava:34b', 'llava:13b', 'llava:13b-v1.6', 'llava:latest', 'llava:7b-v1.6', 'llava:7b']
+        default_pull = 'llava:13b'
+    elif power_level == 'medium':
+        # Version standard
+        preferred = ['llava:13b', 'llava:latest', 'llava:7b-v1.6', 'llava:7b']
+        default_pull = 'llava:latest'
+    else:
+        # Version légère pour machines limitées
+        preferred = ['llava:7b', 'llava:7b-v1.6', 'llava:latest']
+        default_pull = 'llava:7b'
+    
+    # Chercher le meilleur modèle disponible
+    for model in preferred:
+        if model in llava_models:
+            _selected_llava_model = model
+            return model, power_level, ram_gb, vram_gb
+    
+    # Si aucun llava n'est disponible, on retourne celui à télécharger
+    _selected_llava_model = default_pull
+    return default_pull, power_level, ram_gb, vram_gb
+
+def get_llava_model():
+    """Retourne le modèle Llava sélectionné."""
+    global _selected_llava_model
+    return _selected_llava_model or 'llava:latest'
+
 def get_model_context_size(model_name):
     """Récupère la taille de contexte d'un modèle Ollama."""
     if model_name in _model_context_cache:
@@ -202,22 +297,30 @@ def ensure_models():
         
         # Séparer modèles vision (llava) et texte (autres)
         text_models = [m for m in available_models if not m.startswith('llava')]
-        has_llava = any(m.startswith('llava') for m in available_models)
+        llava_models = [m for m in available_models if m.startswith('llava')]
         
         if available_models:
             print("      ✅ Modèles disponibles")
         else:
             print("      ⚠️  Aucun modèle")
         
+        # Sélectionner le modèle llava selon la puissance du PC
+        selected_llava, power_level, ram_gb, vram_gb = select_llava_model(available_models)
+        
+        power_icons = {'high': '🚀', 'medium': '💻', 'low': '📱'}
+        power_names = {'high': 'Élevée', 'medium': 'Moyenne', 'low': 'Limitée'}
+        print(f"      {power_icons[power_level]} Puissance détectée: {power_names[power_level]} (RAM: {ram_gb:.1f}GB, VRAM: {vram_gb:.1f}GB)")
+        print(f"      👁️  Modèle vision sélectionné: {selected_llava}")
+        
         # Télécharger llava si absent
-        if not has_llava:
-            print("      ⬇️  Téléchargement llava:latest...")
+        if not llava_models or selected_llava not in llava_models:
+            print(f"      ⬇️  Téléchargement {selected_llava}...")
             try:
-                subprocess.run(['ollama', 'pull', 'llava:latest'], check=True)
-                print("      ✅ llava:latest téléchargé")
+                subprocess.run(['ollama', 'pull', selected_llava], check=True)
+                print(f"      ✅ {selected_llava} téléchargé")
             except subprocess.CalledProcessError as e:
                 print(f"      ❌ Échec: {e}")
-                print("         Téléchargez manuellement: ollama pull llava:latest")
+                print(f"         Téléchargez manuellement: ollama pull {selected_llava}")
         
         # Télécharger llama3 seulement si AUCUN modèle texte n'est présent
         if not text_models:
@@ -547,8 +650,10 @@ def extract_first_page(text):
     
     return '\n'.join(page_text)
 
-def analyze_llava(image_path, model="llava:latest"):
+def analyze_llava(image_path, model=None):
     """Extrait le texte brut visible sur une image via Llava."""
+    if model is None:
+        model = get_llava_model()
     try:
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
@@ -916,8 +1021,9 @@ def main():
             
             # Appeler llava si une image est disponible
             if image_for_vision:
-                print("  👁️  [LLAVA] Analyse vision 1ère page...")
-                vision_analysis = analyze_llava(image_for_vision, model="llava:latest")
+                llava_model = get_llava_model()
+                print(f"  👁️  [{llava_model.upper()}] Analyse vision 1ère page...")
+                vision_analysis = analyze_llava(image_for_vision)
                 if vision_analysis:
                     print(f"      ✅ {len(vision_analysis)} caractères extraits")
                 else:
