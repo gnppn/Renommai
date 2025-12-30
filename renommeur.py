@@ -20,7 +20,7 @@ from datetime import datetime
 from io import BytesIO
 
 import pdfplumber
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
 import ollama
 
@@ -122,31 +122,40 @@ def check_deps():
 
 def ensure_models():
     """Vérifie et télécharge les modèles Ollama manquants."""
-    required_models = ["llava:latest", "llama3:8b-instruct-q4_0"]
-    
     print("\n🤖 Vérification des modèles Ollama...")
     
     try:
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
         available_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
         
+        # Séparer modèles vision (llava) et texte (autres)
+        text_models = [m for m in available_models if not m.startswith('llava')]
+        has_llava = any(m.startswith('llava') for m in available_models)
+        
         if available_models:
             print("      ✅ Modèles disponibles")
         else:
             print("      ⚠️  Aucun modèle")
         
-        for model in required_models:
-            base_model = model.split(':')[0]
-            model_found = any(base_model in m for m in available_models)
-            
-            if not model_found:
-                print(f"      ⬇️  Téléchargement {model}...")
-                try:
-                    subprocess.run(['ollama', 'pull', model], check=True)
-                    print(f"      ✅ {model} téléchargé")
-                except subprocess.CalledProcessError as e:
-                    print(f"      ❌ Échec: {e}")
-                    print(f"         Téléchargez manuellement: ollama pull {model}")
+        # Télécharger llava si absent
+        if not has_llava:
+            print("      ⬇️  Téléchargement llava:latest...")
+            try:
+                subprocess.run(['ollama', 'pull', 'llava:latest'], check=True)
+                print("      ✅ llava:latest téléchargé")
+            except subprocess.CalledProcessError as e:
+                print(f"      ❌ Échec: {e}")
+                print("         Téléchargez manuellement: ollama pull llava:latest")
+        
+        # Télécharger llama3 seulement si AUCUN modèle texte n'est présent
+        if not text_models:
+            print("      ⬇️  Téléchargement llama3:8b-instruct-q4_0...")
+            try:
+                subprocess.run(['ollama', 'pull', 'llama3:8b-instruct-q4_0'], check=True)
+                print("      ✅ llama3:8b-instruct-q4_0 téléchargé")
+            except subprocess.CalledProcessError as e:
+                print(f"      ❌ Échec: {e}")
+                print("         Téléchargez manuellement: ollama pull llama3:8b-instruct-q4_0")
         
         print()
     
