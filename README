@@ -1,0 +1,59 @@
+RenAIme
+=======
+
+> ⚠️ Petit projet de vacances **vibecodé**. N'en attendez rien de fiable.
+
+
+Quoi
+----
+ - Un outil pour trier et renommer par IA des documents administratifs
+ - Sources images ou PDF acceptés
+ - Analyse du contenu (OCR) des fichiers, puis extraction du contenu par IA (mistral via ollama)
+ - Sortie : `Date Institution Objet.ext`
+ - L'IA tente d'harmoniser-simplifier la sortie.
+ -  Ecrit pour un vieux laptop peu puissant.
+
+Installation éclair
+-------------------
+
+Ouvrez les scripts d'installation présents pour Windows, macOS et Debian
+
+Ou
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Pré-requis rapides
+------------------
+- Python 3.10+ (venv recommandé).
+- Dépendances clés : `pytesseract`, `pdfplumber`, `pypdf`, `pdf2image`, `ollama`.
+- Tesseract installé sur le système (langue fra).
+- Modèle Ollama disponible localement (`ollama pull mistral:7b-instruct-v0.3-q4_K_M`).
+
+Lancement minimal
+-----------------
+```bash
+python renommeur.py
+```
+- Choisir le dossier source (par défaut `documents`).
+- Les exports et échecs sont créés dans `Export_<timestamp>` et `Echec_<timestamp>`.
+- Un log CSV est ajouté dans le dossier d’export.
+- Interrompez le script **avec Ctrl+C**
+
+Notes de fiabilité
+------------------
+- Dates exigent `YYYY-MM` ou, à défaut, `YYYY`.
+- En cas de doute, les champs passent à `inconnu`.
+- Les OCR bruyants ou les scans de mauvaise qualité peuvent dégrader les résultats.
+
+Tests
+-----
+- Tests rapides : `pytest tests/test_ocr_pipeline.py` (utilise `./Fichiers test`).
+- Pipeline complet : `pytest tests/test_full_pipeline.py` (peut être long/IO-heavy).
+
+État d’esprit
+-------------
+- Ce dépôt est vraiment pensé en __one shot__ pour un besoin précis. Mais si ça peut servir...
