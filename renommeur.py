@@ -618,7 +618,12 @@ def generate_name(inst, obj, date, ext):
     inst_clean = sanitize(inst)
     obj_clean = sanitize(obj)
     # Format strict: YYYY-MM [Institution] [Objet].ext
-    return f"{date} {inst_clean} {obj_clean}{ext}".strip()
+    name = f"{date} {inst_clean} {obj_clean}{ext}".strip()
+    # Capitaliser chaque mot (sauf la date)
+    parts = name.split(' ', 1)  # Séparer date du reste
+    if len(parts) == 2:
+        return f"{parts[0]} {parts[1].title()}"
+    return name.title()
 
 # ========== MAIN ==========
 
