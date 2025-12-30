@@ -10,7 +10,7 @@ Dates candidates: {dates}
 Règles:
 - Institution = émetteur, sans "La/Le/SA/SARL", ex: "Banque Populaire"
 - Objet = type de document, ex: "Facture", "Fiche De Paie"
-- Date = YYYY-MM. "23 janvier 2012" → 2012-01 (pas 2023!)
+- Date = YYYY-MM. "23 janvier 2012" → 2012-01, "07/06/13" → 2013-06
 - Si certitude haute, déduis les infos manquantes
 - "inconnu" seulement si aucune piste
 

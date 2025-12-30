@@ -71,6 +71,23 @@ Objet 1: Avis Imposition
 Objet 2: Avis Impot Revenu
 Date: 2023
 
+### Exemple 5: Facture agence immobilière
+```
+[TEXTE VISION]
+LODGIS
+Location d'appartements meublés à Paris
+Date: 07/06/13
+Facture N° F13060161
+Location de l'appartement situé à Paris
+Frais d'agence: 77,34€
+```
+**Réponse:**
+Institution 1: Lodgis
+Institution 2: Lodgis Immobilier
+Objet 1: Facture Agence
+Objet 2: Frais Agence Immobiliere
+Date: 2013-06
+
 ## RÈGLES DE FORMATAGE
 
 **INSTITUTION** (Émetteur):
@@ -84,8 +101,10 @@ Date: 2023
 
 **DATE** (Émission):
 - Format: YYYY-MM (préféré) ou YYYY
-- ⚠️ ATTENTION aux dates textuelles:
+- ⚠️ ATTENTION aux dates:
   - "23 janvier 2012" → Le 23 est le JOUR, 2012 est l'ANNÉE → **2012-01**
+  - "07/06/13" → 7 juin 2013 → **2013-06**
+  - "15/03/24" → 15 mars 2024 → **2024-03**
   - Ne confonds JAMAIS le jour avec l'année!
 
 ## COMPLÉTION INTELLIGENTE

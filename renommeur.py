@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RenAIme - Script minimaliste de tri et renommage de documents
-Basé sur OCR + Analyse IA Ollama + Llava Vision
+Basé sur OCR + Analyse IA Ollama + Vision IA
 """
 
 import os
@@ -63,8 +63,8 @@ PROMPTS_DIR = SCRIPT_DIR / "prompts"
 # Cache pour la taille de contexte des modèles
 _model_context_cache = {}
 
-# Modèle Llava sélectionné (sera défini par detect_llava_model)
-_selected_llava_model = None
+# Modèle Vision sélectionné (llava, minicpm-v, etc.)
+_selected_vision_model = None
 
 def get_system_power_level():
     """Détecte la puissance du système et retourne un niveau (low, medium, high).
@@ -120,7 +120,7 @@ def select_vision_model(available_models):
     - PC faible (low): minicpm-v - Léger et efficace pour OCR
     - PC moyen/puissant (medium/high): llava-llama3 - Plus performant
     """
-    global _selected_llava_model
+    global _selected_vision_model
     
     power_level, ram_gb, vram_gb = get_system_power_level()
     
@@ -140,17 +140,17 @@ def select_vision_model(available_models):
     # Chercher le meilleur modèle disponible
     for model in preferred:
         if model in vision_models:
-            _selected_llava_model = model
+            _selected_vision_model = model
             return model, power_level, ram_gb, vram_gb
     
     # Si aucun modèle vision n'est disponible, on retourne celui à télécharger
-    _selected_llava_model = default_pull
+    _selected_vision_model = default_pull
     return default_pull, power_level, ram_gb, vram_gb
 
 def get_vision_model():
     """Retourne le modèle vision sélectionné."""
-    global _selected_llava_model
-    return _selected_llava_model or 'llava-llama3:latest'
+    global _selected_vision_model
+    return _selected_vision_model or 'llava-llama3:latest'
 
 def get_model_context_size(model_name):
     """Récupère la taille de contexte d'un modèle Ollama."""
@@ -383,6 +383,7 @@ def create_searchable_pdf_page(img):
         img_rgb.save(pdf_img, format='PDF')
         pdf_img.seek(0)
         
+        # Créer la couche OCR avec Tesseract
         pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img, extension='pdf')
         if not pdf_ocr_bytes:
             return pdf_img.getvalue()
@@ -398,6 +399,7 @@ def create_searchable_pdf_page(img):
                     page_img = reader_img.pages[0]
                     page_ocr = reader_ocr.pages[0]
                     
+                    # Fusionner la couche OCR sur l'image originale
                     page_img.merge_page(page_ocr)
                     writer.add_page(page_img)
                     
@@ -414,33 +416,147 @@ def create_searchable_pdf_page(img):
         img.convert('RGB').save(pdf_out, format='PDF')
         return pdf_out.getvalue()
 
-def ocr_pdf(path):
-    """OCR un PDF et retourne (texte, chemin PDF searchable)."""
+
+def _ocr_pdf_fallback(path):
+    """Fallback OCR simple pour PDF (utilisé si pypdf non disponible)."""
     try:
         full_text = ""
-        page_pdfs = []
         images = []
         
         try:
             with pdfplumber.open(path) as pdf:
-                if pdf.pages:
-                    for page in pdf.pages:
-                        try:
-                            img = page.to_image(resolution=300).original
-                            if img:
-                                images.append(img)
-                        except:
-                            pass
+                for page in pdf.pages:
+                    try:
+                        img = page.to_image(resolution=300).original
+                        if img:
+                            images.append(img)
+                    except:
+                        pass
         except:
+            pass
+        
+        if not images and PDF2IMAGE_AVAILABLE:
+            images = convert_from_path(str(path), dpi=300)
+        
+        if not images:
+            return None, None
+        
+        # OCR et création PDF simple (sans fusion avec original)
+        page_pdfs = []
+        for img in images:
+            img = preprocess_image_for_ocr(img)
+            full_text += pytesseract.image_to_string(img, lang="fra") + "\n"
+            page_pdfs.append(create_searchable_pdf_page(img))
+        
+        if not full_text.strip():
+            return None, None
+        
+        # Assembler les pages
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp_path = tmp.name
+            _temp_files.append(tmp_path)
+            if page_pdfs:
+                tmp.write(page_pdfs[0])  # Fallback: première page seulement
+        
+        return full_text, tmp_path
+    except:
+        return None, None
+
+
+def create_searchable_pdf_from_original(original_path):
+    """Crée un PDF searchable à partir du fichier original en préservant la qualité.
+    
+    Préserve l'image originale comme calque visible et ajoute une couche texte OCR.
+    
+    Args:
+        original_path: Chemin vers le fichier original (PDF ou image)
+    
+    Returns:
+        tuple: (texte_ocr, chemin_pdf_searchable) ou (None, None) en cas d'échec
+    """
+    try:
+        ext = Path(original_path).suffix.lower()
+        full_text = ""
+        
+        if ext == ".pdf":
+            # PDF original - on travaille page par page
+            if not PYPDF_AVAILABLE:
+                return _ocr_pdf_fallback(original_path)
+            
             images = []
-        
-        if (not images or len(images) < 2) and PDF2IMAGE_AVAILABLE:
+            
+            # Extraire les images du PDF original
             try:
-                images = convert_from_path(str(path), dpi=300)
+                with pdfplumber.open(original_path) as pdf:
+                    if pdf.pages:
+                        for page in pdf.pages:
+                            try:
+                                img = page.to_image(resolution=300).original
+                                if img:
+                                    images.append(img)
+                            except:
+                                pass
             except:
-                pass
+                images = []
+            
+            if (not images or len(images) < 2) and PDF2IMAGE_AVAILABLE:
+                try:
+                    images = convert_from_path(str(original_path), dpi=300)
+                except:
+                    pass
+            
+            if not images:
+                return None, None
+            
+            # Lire le PDF original pour préserver la qualité
+            original_reader = PdfReader(original_path)
+            writer = PdfWriter()
+            
+            for page_idx, (original_page, img) in enumerate(zip(original_reader.pages, images)):
+                # Rotation automatique si nécessaire
+                try:
+                    osd = pytesseract.image_to_osd(img)
+                    m = re.search(r"Rotate:\s*(\d+)", osd)
+                    if m:
+                        rot = int(m.group(1))
+                        if rot:
+                            img = img.rotate(360 - rot, expand=True)
+                except:
+                    pass
+                
+                # Prétraitement pour OCR
+                img_processed = preprocess_image_for_ocr(img)
+                text = pytesseract.image_to_string(img_processed, lang="fra")
+                full_text += text + "\n"
+                
+                # Créer la couche OCR invisible
+                pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+                
+                if pdf_ocr_bytes:
+                    try:
+                        reader_ocr = PdfReader(BytesIO(pdf_ocr_bytes))
+                        if reader_ocr.pages:
+                            # Fusionner couche OCR sur la page originale
+                            original_page.merge_page(reader_ocr.pages[0])
+                    except:
+                        pass
+                
+                writer.add_page(original_page)
+            
+            # Sauvegarder le PDF final
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                tmp_path = tmp.name
+                _temp_files.append(tmp_path)
+                with open(tmp_path, 'wb') as f:
+                    writer.write(f)
+            
+            return full_text, tmp_path
         
-        for img_idx, img in enumerate(images):
+        elif ext in [".png", ".jpg", ".jpeg"]:
+            # Image originale
+            img = Image.open(original_path)
+            
+            # Rotation automatique
             try:
                 osd = pytesseract.image_to_osd(img)
                 m = re.search(r"Rotate:\s*(\d+)", osd)
@@ -451,65 +567,130 @@ def ocr_pdf(path):
             except:
                 pass
             
-            img = preprocess_image_for_ocr(img)
-            text = pytesseract.image_to_string(img, lang="fra")
-            full_text += text + "\n"
+            # Créer le PDF à partir de l'image originale (qualité préservée)
+            pdf_original = BytesIO()
+            img_rgb = img.convert('RGB')
+            img_rgb.save(pdf_original, format='PDF', resolution=300)
+            pdf_original.seek(0)
             
-            pdf_bytes = create_searchable_pdf_page(img)
-            page_pdfs.append(pdf_bytes)
+            # Prétraitement pour OCR
+            img_processed = preprocess_image_for_ocr(img)
+            full_text = pytesseract.image_to_string(img_processed, lang="fra")
+            
+            # Créer la couche OCR
+            pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+            
+            if PYPDF_AVAILABLE and pdf_ocr_bytes:
+                try:
+                    reader_img = PdfReader(pdf_original)
+                    reader_ocr = PdfReader(BytesIO(pdf_ocr_bytes))
+                    
+                    writer = PdfWriter()
+                    
+                    if reader_img.pages and reader_ocr.pages:
+                        page_img = reader_img.pages[0]
+                        page_ocr = reader_ocr.pages[0]
+                        
+                        # Fusionner couche OCR sur l'image originale
+                        page_img.merge_page(page_ocr)
+                        writer.add_page(page_img)
+                        
+                        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                            tmp_path = tmp.name
+                            _temp_files.append(tmp_path)
+                            with open(tmp_path, 'wb') as f:
+                                writer.write(f)
+                        
+                        return full_text, tmp_path
+                except:
+                    pass
+            
+            # Fallback: PDF OCR simple
+            if pdf_ocr_bytes:
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                    tmp.write(pdf_ocr_bytes)
+                    tmp_path = tmp.name
+                    _temp_files.append(tmp_path)
+                return full_text, tmp_path
+            
+            return full_text, None
         
-        if not full_text:
-            return None, None
-        
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-            tmp_path = tmp.name
-            _temp_files.append(tmp_path)
-            if PYPDF_AVAILABLE and page_pdfs:
-                writer = PdfWriter()
-                for pb in page_pdfs:
-                    if pb:
-                        reader = PdfReader(BytesIO(pb))
-                        for p in reader.pages:
-                            writer.add_page(p)
-                with open(tmp_path, 'wb') as f:
-                    writer.write(f)
-            elif page_pdfs:
-                with open(tmp_path, 'wb') as f:
-                    f.write(page_pdfs[0])
-        
-        return full_text, tmp_path
-    except:
+        return None, None
+    
+    except Exception as e:
         return None, None
 
-def extract_from_image(path):
-    """Extrait texte d'une image et génère un PDF searchable."""
+
+def enrich_pdf_with_vision_text(pdf_path, vision_text, ocr_text=None):
+    """Enrichit un PDF searchable avec le texte extrait par le modèle vision.
+    
+    Ajoute le texte vision dans les métadonnées du PDF (champ Keywords/Subject).
+    Cela permet de retrouver le document via une recherche textuelle tout en
+    gardant le PDF léger (pas de couche texte supplémentaire).
+    
+    Args:
+        pdf_path: Chemin vers le PDF searchable
+        vision_text: Texte extrait par le modèle vision
+        ocr_text: Texte OCR (optionnel, pour enrichissement complet)
+    
+    Returns:
+        str: Chemin vers le PDF enrichi (même fichier si modification in-place)
+    """
+    if not PYPDF_AVAILABLE or not vision_text:
+        return pdf_path
+    
     try:
-        img = Image.open(path)
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
         
-        try:
-            osd = pytesseract.image_to_osd(img)
-            m = re.search(r"Rotate:\s*(\d+)", osd)
-            if m:
-                rot = int(m.group(1))
-                if rot:
-                    img = img.rotate(360 - rot, expand=True)
-        except:
-            pass
+        # Copier toutes les pages
+        for page in reader.pages:
+            writer.add_page(page)
         
-        img = preprocess_image_for_ocr(img)
-        text = pytesseract.image_to_string(img, lang="fra")
+        # Préparer le texte pour les métadonnées
+        # Limiter la taille pour éviter des métadonnées trop volumineuses
+        vision_summary = vision_text[:2000] if len(vision_text) > 2000 else vision_text
         
-        pdf_bytes = create_searchable_pdf_page(img)
-        if pdf_bytes:
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-                tmp.write(pdf_bytes)
-                tmp_path = tmp.name
-                _temp_files.append(tmp_path)
-            return text, tmp_path
+        # Nettoyer le texte pour les métadonnées (enlever les caractères problématiques)
+        vision_summary = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', vision_summary)
+        vision_summary = ' '.join(vision_summary.split())  # Normaliser les espaces
         
-        return text, None
-    except:
-        return None, None
+        # Ajouter les métadonnées avec le texte vision
+        # Le champ "Keywords" est souvent indexé par les moteurs de recherche
+        metadata = reader.metadata or {}
+        
+        # Créer les nouvelles métadonnées
+        new_metadata = {
+            '/Producer': 'RenAIme - OCR + Vision IA',
+            '/Creator': 'RenAIme',
+            '/Subject': f'[Vision IA] {vision_summary}',
+        }
+        
+        # Ajouter le texte combiné dans Keywords pour recherche
+        keywords_parts = []
+        if vision_text:
+            keywords_parts.append(vision_summary)
+        
+        if keywords_parts:
+            new_metadata['/Keywords'] = ' | '.join(keywords_parts)
+        
+        # Appliquer les métadonnées
+        writer.add_metadata(new_metadata)
+        
+        # Sauvegarder le PDF enrichi
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            enriched_path = tmp.name
+            _temp_files.append(enriched_path)
+        
+        with open(enriched_path, 'wb') as f:
+            writer.write(f)
+        
+        return enriched_path
+    
+    except Exception as e:
+        # En cas d'erreur, retourner le PDF original
+        return pdf_path
+
 
 def extract_from_docx(path):
     """Extrait texte d'un DOCX."""
@@ -598,17 +779,42 @@ def extract_dates(text):
         if 1 <= day_int <= 31:
             add_date(year, month)
     
+    # Format 4b: DD/MM/YY (année sur 2 chiffres)
+    for day, month, year in re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{2})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            # Convertir année 2 chiffres en 4 chiffres
+            year_int = int(year)
+            full_year = f"20{year}" if year_int < 50 else f"19{year}"
+            add_date(full_year, month)
+    
     # Format 5: DD.MM.YYYY (format européen avec points)
     for day, month, year in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", text):
         day_int = int(day)
         if 1 <= day_int <= 31:
             add_date(year, month)
     
+    # Format 5b: DD.MM.YY (année sur 2 chiffres)
+    for day, month, year in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            year_int = int(year)
+            full_year = f"20{year}" if year_int < 50 else f"19{year}"
+            add_date(full_year, month)
+    
     # Format 6: DD-MM-YYYY (format avec tirets)
     for day, month, year in re.findall(r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b", text):
         day_int = int(day)
         if 1 <= day_int <= 31:
             add_date(year, month)
+    
+    # Format 6b: DD-MM-YY (année sur 2 chiffres)
+    for day, month, year in re.findall(r"\b(\d{1,2})-(\d{1,2})-(\d{2})\b", text):
+        day_int = int(day)
+        if 1 <= day_int <= 31:
+            year_int = int(year)
+            full_year = f"20{year}" if year_int < 50 else f"19{year}"
+            add_date(full_year, month)
     
     # Format 7: YYYY/MM/DD
     for year, month, day in re.findall(r"\b(\d{4})/(\d{1,2})/(\d{1,2})\b", text):
@@ -651,7 +857,7 @@ def analyze_vision(image_path, model=None):
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
         
-        vision_prompt = load_prompt("llava_vision")
+        vision_prompt = load_prompt("vision_prompt")
         
         response = ollama.generate(
             model=model,
@@ -682,8 +888,8 @@ def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial
         context_parts.append(f"[NOM FICHIER ORIGINAL]\n{original_filename}")
     
     if vision_analysis:
-        context_parts.append(f"[TEXTE LLAVA (VISION IA)]\n{vision_analysis}")
-    
+        context_parts.append(f"[TEXTE VISION IA]\n{vision_analysis}")
+
     context_parts.append(f"[TEXTE TESSERACT (OCR)]\n{first_page_text}")
     context_parts.append(f"[DATES CANDIDATES]\n{dates_str}")
     
@@ -804,16 +1010,32 @@ def parse_analysis(text, first_page_text=None):
                 if value and value.lower() not in ("", "inconnu"):
                     obj_variants.append(value)
         
-        # Date
-        elif line_lower.startswith("date:"):
-            value = line.split(":", 1)[1].strip()
+        # Date - accepter plusieurs formats
+        elif line_lower.startswith("date"):
+            # Extraire après le premier : s'il existe
+            if ":" in line:
+                value = line.split(":", 1)[1].strip()
+            else:
+                value = line.strip()
             value = re.sub(r'\s*[\(\[].*$', '', value).strip()
+            
+            # Format YYYY-MM direct
             if re.match(r"^\d{4}-\d{2}$", value):
                 date = value
             elif value.lower() != "inconnu":
+                # Format YYYY-MM dans le texte
                 match = re.search(r"(\d{4})-(\d{2})", value)
                 if match:
                     date = f"{match.group(1)}-{match.group(2)}"
+                else:
+                    # Format DD/MM/YY ou DD/MM/YYYY
+                    match = re.search(r"(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})", value)
+                    if match:
+                        day, month, year = match.groups()
+                        # Convertir année 2 chiffres en 4 chiffres
+                        if len(year) == 2:
+                            year = "20" + year if int(year) < 50 else "19" + year
+                        date = f"{year}-{month.zfill(2)}"
     
     # Assurer au moins 3 variantes (remplir avec "inconnu")
     while len(inst_variants) < 3:
@@ -856,13 +1078,21 @@ def generate_name(inst, obj, date, ext):
     """Génère le nouveau nom - STRICT: YYYY-MM [Institution] [Objet].ext"""
     inst_clean = sanitize(inst)
     obj_clean = sanitize(obj)
-    # Format strict: YYYY-MM [Institution] [Objet].ext
-    name = f"{date} {inst_clean} {obj_clean}{ext}".strip()
-    # Capitaliser chaque mot (sauf la date)
-    parts = name.split(' ', 1)  # Séparer date du reste
-    if len(parts) == 2:
-        return f"{parts[0]} {parts[1].title()}"
-    return name.title()
+    
+    # Capitaliser uniquement la première lettre de chaque partie (sauf date et extension)
+    def capitalize_part(s):
+        """Première lettre majuscule, reste minuscule pour chaque mot."""
+        if not s or s.lower() == "inconnu":
+            return s
+        # Capitaliser chaque mot individuellement
+        words = s.split()
+        return ' '.join(w.capitalize() for w in words)
+    
+    inst_final = capitalize_part(inst_clean)
+    obj_final = capitalize_part(obj_clean)
+    
+    # Format strict: YYYY-MM [Institution] [Objet].ext (extension en minuscules)
+    return f"{date} {inst_final} {obj_final}{ext.lower()}"
 
 # ========== MAIN ==========
 
@@ -884,12 +1114,12 @@ def main():
     config["SOURCE_DIR"] = source_dir
     save_config(config)
     
-    # Sélection modèle (masquer llava qui est utilisé automatiquement pour la vision)
+    # Sélection modèle (masquer les modèles vision utilisés automatiquement)
     try:
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
         all_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
-        # Filtrer les modèles llava (utilisés automatiquement pour l'analyse vision)
-        models = [m for m in all_models if not m.startswith('llava')]
+        # Filtrer les modèles vision (utilisés automatiquement pour l'analyse vision)
+        models = [m for m in all_models if not m.startswith(('llava', 'minicpm-v'))]
         if models:
             print("\n🧠 Modèles Ollama disponibles:")
             for i, m in enumerate(models, 1):
@@ -938,22 +1168,23 @@ def main():
                 if text_primary:
                     print("✅ (natif)")
                     text_fallback = text_primary  # Source = texte natif
+                    # Pas besoin d'OCRisation pour PDF avec texte natif
                 else:
                     print("❌ (image)")
-                    print("  🔍 [OCR] Prétraitement Tesseract...", end=" ", flush=True)
-                    text_primary, tmp_pdf = ocr_pdf(file_path)
+                    print("  🔍 [OCR] Création PDF searchable (original + couche texte)...", end=" ", flush=True)
+                    text_primary, tmp_pdf = create_searchable_pdf_from_original(file_path)
                     text_fallback = None  # Pas de source alternative pour PDF image
                     if tmp_pdf:
-                        print("✅ PDF OCRisé créé")
+                        print("✅ PDF searchable créé")
                     else:
                         print("❌")
             elif ext in [".png", ".jpg", ".jpeg"]:
-                print("  🖼️  [IMAGE] OCR Tesseract...", end=" ", flush=True)
-                text_primary, tmp_pdf = extract_from_image(file_path)
+                print("  🖼️  [IMAGE] Création PDF searchable (original + couche texte)...", end=" ", flush=True)
+                text_primary, tmp_pdf = create_searchable_pdf_from_original(file_path)
                 text_fallback = None  # Pas de source alternative pour image
                 if text_primary:
                     if tmp_pdf:
-                        print("✅ PDF OCRisé créé")
+                        print("✅ PDF searchable créé")
                     else:
                         print("✅")
                 else:
@@ -982,8 +1213,8 @@ def main():
                     csv.writer(f).writerow([file_path.name, "Échec", "", "", "", ""])
                 continue
             
-            # ========== ANALYSE LLAVA (AVANT RECHERCHE DE DATE) ==========
-            # Llava analyse la 1ère page et fournit contexte visuel
+            # ========== ANALYSE VISION IA (AVANT RECHERCHE DE DATE) ==========
+            # Le modèle vision analyse la 1ère page et fournit contexte visuel
             vision_analysis = None
             image_for_vision = None
             
@@ -992,7 +1223,7 @@ def main():
                 # Image directe = déjà une seule page
                 image_for_vision = str(file_path)
             elif ext == ".pdf" and tmp_pdf:
-                # Extraire UNIQUEMENT la première page du PDF en image pour llava
+                # Extraire UNIQUEMENT la première page du PDF en image pour le modèle vision
                 try:
                     images = []
                     with pdfplumber.open(tmp_pdf) as pdf:
@@ -1025,13 +1256,13 @@ def main():
                 else:
                     print("      ❌ Pas de résultat")
             
-            # ========== EXTRACTION DATES (AVEC TESSERACT + LLAVA) ==========
-            # Combine Tesseract OCR + description Llava pour meilleure détection
+            # ========== EXTRACTION DATES (AVEC TESSERACT + VISION IA) ==========
+            # Combine Tesseract OCR + description Vision IA pour meilleure détection
             print("  📅 [DATES] Recherche...")
             # Texte combiné pour recherche de date
             combined_text = text_primary
             if vision_analysis:
-                # Ajouter la description llava au texte pour recherche de date
+                # Ajouter la description vision au texte pour recherche de date
                 combined_text = vision_analysis + "\n" + text_primary
             
             dates = extract_dates(combined_text)
@@ -1091,14 +1322,42 @@ def main():
             # Renommage
             new_name = generate_name(inst, obj, date, ext)
             new_path = export / new_name
-            shutil.copy2(str(file_path), str(new_path))
             
-            if tmp_pdf:
+            # Pour les PDF, enrichir avec le texte vision si disponible
+            if ext == ".pdf" and vision_analysis and PYPDF_AVAILABLE:
+                # Enrichir le PDF (original ou searchable) avec les métadonnées vision
+                pdf_to_enrich = tmp_pdf if tmp_pdf else str(file_path)
+                print("  📝 [ENRICHISSEMENT] Ajout texte vision aux métadonnées PDF...")
+                enriched_pdf = enrich_pdf_with_vision_text(pdf_to_enrich, vision_analysis, text_primary)
+                print("      ✅ Métadonnées enrichies")
+                
+                pdf_name = generate_name(inst, obj, date, ".pdf")
+                shutil.copy2(enriched_pdf, str(export / pdf_name))
+                print(f"  📄 PDF final: {pdf_name}")
+                
+                # Copier aussi le fichier original si c'est une image ou autre format
+                if ext != ".pdf":
+                    shutil.copy2(str(file_path), str(new_path))
+                
+                # Nettoyage
+                if tmp_pdf and tmp_pdf in _temp_files:
+                    _temp_files.remove(tmp_pdf)
+                if enriched_pdf != pdf_to_enrich and enriched_pdf in _temp_files:
+                    _temp_files.remove(enriched_pdf)
+            
+            elif tmp_pdf:
+                # Image convertie en PDF searchable (sans texte vision)
                 pdf_name = generate_name(inst, obj, date, ".pdf")
                 shutil.copy2(tmp_pdf, str(export / pdf_name))
+                print(f"  📄 PDF searchable: {pdf_name}")
+                shutil.copy2(str(file_path), str(new_path))
                 _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
             
-            # Exporter le texte vision dans un fichier .txt
+            else:
+                # Autres formats (DOCX, XLSX, etc.) - copie simple
+                shutil.copy2(str(file_path), str(new_path))
+            
+            # Exporter le texte vision dans un fichier .txt (backup consultable)
             if vision_analysis:
                 txt_name = generate_name(inst, obj, date, ".txt")
                 txt_path = export / txt_name
