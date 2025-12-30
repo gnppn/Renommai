@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RenAIme - Script minimaliste de tri et renommage de documents
-Basé sur OCR + Analyse IA Ollama
+Basé sur OCR + Analyse IA Ollama + Llava Vision
 """
 
 import os
@@ -14,6 +14,7 @@ import tempfile
 import subprocess
 import signal
 import atexit
+import base64
 from pathlib import Path
 from datetime import datetime
 
@@ -119,6 +120,47 @@ def check_deps():
         print(f"[ERREUR] Dépendances manquantes: {', '.join(missing)}")
         sys.exit(1)
 
+def ensure_models():
+    """Vérifie et télécharge les modèles Ollama manquants (llava + llama3)."""
+    required_models = ["llava:latest", "llama3:8b-instruct-q4_0"]
+    
+    print("\n[MODÈLES] Vérification des modèles Ollama...")
+    
+    try:
+        # Récupérer liste des modèles disponibles
+        out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
+        available_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
+        
+        print(f"  Modèles disponibles: {available_models if available_models else 'aucun'}")
+        
+        for model in required_models:
+            # Normaliser le nom (ignorer la version pour la comparaison)
+            base_model = model.split(':')[0]  # 'llava' ou 'llama3'
+            
+            # Vérifier si le modèle est présent
+            model_found = any(base_model in m for m in available_models)
+            
+            if not model_found:
+                print(f"  [⬇️  TÉLÉCHARGEMENT] {model}...")
+                try:
+                    subprocess.run(['ollama', 'pull', model], check=True)
+                    print(f"  ✓ {model} téléchargé avec succès")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ✗ Erreur lors du téléchargement de {model}: {e}")
+                    print(f"     Téléchargez manuellement: ollama pull {model}")
+            else:
+                print(f"  ✓ {model} déjà présent")
+        
+        print("[✓] Vérification des modèles terminée\n")
+    
+    except FileNotFoundError:
+        print("  ✗ ERREUR: Ollama n'est pas installé ou pas dans le PATH")
+        print("     Installez Ollama: https://ollama.ai")
+        sys.exit(1)
+    except Exception as e:
+        print(f"  ✗ Erreur lors de la vérification des modèles: {e}")
+        print("     Vous pouvez continuer, mais certains modèles pourraient manquer")
+
 # ========== EXTRACTION TEXTE ==========
 
 def preprocess_image_for_ocr(img):
@@ -170,12 +212,14 @@ def extract_from_pdf(path):
     except:
         return None
 
-def create_searchable_pdf_page(img):
+def create_searchable_pdf_page(img, vision_description=None):
     """Crée une page PDF searchable: image visible + couche OCR texte invisible.
+    
+    Si vision_description fournie (de llava), l'ajoute comme préambule à la couche texte.
     
     Approche:
     1. Générer image→PDF (layer image)
-    2. Générer image→PDF+OCR (layer texte)
+    2. Générer image→PDF+OCR (layer texte) + préambule vision optionnel
     3. Fusionner les deux layers
     """
     try:
@@ -207,6 +251,19 @@ def create_searchable_pdf_page(img):
                     page_img = reader_img.pages[0]
                     page_ocr = reader_ocr.pages[0]
                     
+                    # Ajouter description vision si disponible (améliore searchabilité)
+                    if vision_description:
+                        # Créer une page de texte supplémentaire avec la description vision
+                        vision_pdf = pytesseract.image_to_pdf_or_hocr(
+                            Image.new('L', (100, 100), color=255),
+                            extension='pdf'
+                        )
+                        if vision_pdf:
+                            reader_vision = PdfReader(BytesIO(vision_pdf))
+                            if reader_vision.pages:
+                                # Essayer d'ajouter la vision au PDF OCR
+                                page_ocr = reader_vision.pages[0]
+                    
                     # Fusionner: mettre la couche OCR sur l'image
                     # (Le texte du OCR sera invisible mais searchable)
                     page_img.merge_page(page_ocr)
@@ -228,8 +285,11 @@ def create_searchable_pdf_page(img):
         img.convert('RGB').save(pdf_out, format='PDF')
         return pdf_out.getvalue()
 
-def ocr_pdf(path):
-    """OCR un PDF et retourne le texte + chemin temp PDF searchable."""
+def ocr_pdf(path, vision_description=None):
+    """OCR un PDF et retourne le texte + chemin temp PDF searchable.
+    
+    Si vision_description fournie (de llava), l'enrichit dans le PDF.
+    """
     try:
         full_text = ""
         page_pdfs = []
@@ -257,7 +317,7 @@ def ocr_pdf(path):
                 pass
         
         # Traiter les images
-        for img in images:
+        for img_idx, img in enumerate(images):
             # Autorotation
             try:
                 osd = pytesseract.image_to_osd(img)
@@ -276,7 +336,12 @@ def ocr_pdf(path):
             full_text += text + "\n"
             
             # Créer PDF searchable: image + couche OCR texte
-            pdf_bytes = create_searchable_pdf_page(img)
+            # Ajouter description vision uniquement pour la 1ère page
+            vision_desc = vision_description if img_idx == 0 and vision_description else None
+            if vision_desc:
+                print(f"      └─ Enrichissement avec description vision (searchable)", flush=True)
+            
+            pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_desc)
             page_pdfs.append(pdf_bytes)
         
         if not full_text:
@@ -304,8 +369,11 @@ def ocr_pdf(path):
     except:
         return None, None
 
-def extract_from_image(path):
-    """Extrait texte d'une image et génère un PDF searchable (image + OCR texte)."""
+def extract_from_image(path, vision_description=None):
+    """Extrait texte d'une image et génère un PDF searchable (image + OCR texte).
+    
+    Si vision_description fournie (de llava), l'enrichit dans le PDF.
+    """
     try:
         img = Image.open(path)
         
@@ -326,7 +394,11 @@ def extract_from_image(path):
         text = pytesseract.image_to_string(img, lang="fra")
         
         # Générer PDF searchable: image + couche OCR texte
-        pdf_bytes = create_searchable_pdf_page(img)
+        # Enrichir avec description vision si disponible
+        if vision_description:
+            print(f"      └─ Enrichissement avec description vision (searchable)", flush=True)
+        
+        pdf_bytes = create_searchable_pdf_page(img, vision_description=vision_description)
         if pdf_bytes:
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
                 tmp.write(pdf_bytes)
@@ -469,7 +541,64 @@ def extract_essential_sections(text):
     
     return essential
 
-PROMPT_TEMPLATE = """Tu es un assistant d'analyse de documents. Analyse le texte ci-dessous (première page d'un document) et extrais STRICTEMENT trois champs : Institution, Objet et Date.
+def analyze_llava(image_path, model="llava:latest"):
+    """Analyse la PREMIÈRE PAGE d'un document avec llava et extrait TOUT le texte brut visible.
+    
+    Utilisé comme passe pré-analytique avant ollama. Extrait:
+    - Tout le texte brut visible sur l'image
+    - L'institution/émetteur identifié
+    - Le type de document
+    - Les dates visibles
+    """
+    try:
+        # Lire l'image en base64
+        with open(image_path, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Prompt vision: extraire TOUT le texte brut visible
+        vision_prompt = """Ceci est la PREMIÈRE PAGE d'un document administratif.
+
+Ta mission est d'extraire TOUT le texte brut visible sur cette image, exactement comme tu le lis.
+
+Réponds avec ce format:
+
+[TEXTE EXTRAIT]
+(Retranscris ici TOUT le texte visible sur l'image, ligne par ligne, tel quel)
+
+[ANALYSE]
+Institution/Émetteur: (nom de l'organisme qui a émis ce document)
+Type de document: (facture, relevé, contrat, etc.)
+Dates visibles: (toutes les dates que tu vois)
+
+Sois exhaustif pour le texte extrait. Ne résume pas, retranscris tout."""
+        
+        # Appel llava avec image
+        response = ollama.generate(
+            model=model,
+            prompt=vision_prompt,
+            images=[image_data],
+            stream=False
+        )
+        
+        analysis = response.get("response", "").strip()
+        
+        # Extraire max 4000 caractères pour avoir tout le texte
+        if len(analysis) > 4000:
+            analysis = analysis[:4000]
+        
+        return analysis
+    except Exception as e:
+        return None
+
+PROMPT_TEMPLATE = """Tu es un assistant d'analyse de documents. Tu reçois plusieurs sources d'information sur un document et tu dois extraire STRICTEMENT trois champs : Institution, Objet et Date.
+
+SOURCES D'INFORMATION DISPONIBLES:
+- NOM FICHIER ORIGINAL : Le nom du fichier source (peut contenir des indices)
+- TEXTE LLAVA : Texte extrait visuellement par IA vision (très fiable pour le contenu visible)
+- TEXTE TESSERACT : Texte extrait par OCR (peut contenir des erreurs)
+- DATES CANDIDATES : Dates détectées automatiquement dans le document
+
+CROISE toutes ces sources pour déterminer les informations les plus fiables. En cas de conflit, privilégie LLAVA > TESSERACT > NOM FICHIER.
 
 IMPORTANT: Pour Institution et Objet, propose 3 variantes différentes classées par confiance (Variante 1 = plus probable, Variante 3 = moins probable).
 
@@ -518,15 +647,39 @@ Texte du document:
 {text}
 """
 
-def analyze_ollama(text, dates, model, pass_level="initial"):
-    """Analyse texte avec Ollama - passe la 1ère page COMPLÈTE à Ollama."""
+def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial", original_filename=None):
+    """Analyse texte avec Ollama en combinant toutes les sources d'information.
+    
+    Sources utilisées:
+    - text: Texte extrait par Tesseract (OCR)
+    - dates: Dates candidates détectées
+    - vision_analysis: Texte brut extrait par Llava (vision IA)
+    - original_filename: Nom du fichier original (peut contenir des indices)
+    """
     dates_str = ", ".join(dates) if dates else "aucune"
     
-    # Extraire 1ère page complète
+    # Extraire 1ère page complète du texte Tesseract
     first_page_text = extract_first_page(text)
     
-    # Créer prompt avec 1ère page complète
-    text_to_send = first_page_text
+    # Construire le texte avec TOUTES les sources d'information
+    context_parts = []
+    
+    # 1. Nom du fichier original
+    if original_filename:
+        context_parts.append(f"[NOM FICHIER ORIGINAL]\n{original_filename}")
+    
+    # 2. Texte extrait par Llava (vision) - source prioritaire
+    if vision_analysis:
+        context_parts.append(f"[TEXTE LLAVA (VISION IA)]\n{vision_analysis}")
+    
+    # 3. Texte extrait par Tesseract (OCR)
+    context_parts.append(f"[TEXTE TESSERACT (OCR)]\n{first_page_text}")
+    
+    # 4. Dates candidates
+    context_parts.append(f"[DATES CANDIDATES]\n{dates_str}")
+    
+    text_to_send = "\n\n".join(context_parts)
+    
     prompt = PROMPT_TEMPLATE.format(dates=dates_str, text=text_to_send)
     
     try:
@@ -703,6 +856,7 @@ def generate_name(inst, obj, date, ext):
 
 def main():
     check_deps()
+    ensure_models()
     config = load_config()
     
     # Dossier source avec défaut
@@ -802,31 +956,100 @@ def main():
             if not text_primary:
                 print("  [ERREUR] Aucun texte détecté")
                 shutil.copy2(str(file_path), str(failure / file_path.name))
+                # Copier aussi le PDF OCRisé s'il existe (pour consultation ultérieure)
+                if tmp_pdf and os.path.exists(tmp_pdf):
+                    pdf_failure_name = file_path.stem + "_OCR.pdf"
+                    shutil.copy2(tmp_pdf, str(failure / pdf_failure_name))
+                    print(f"  └─ PDF OCRisé copié: {pdf_failure_name}")
+                    _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
                 with open(log_path, 'a', newline='', encoding='utf-8') as f:
                     csv.writer(f).writerow([file_path.name, "Échec", "", "", "", ""])
                 continue
             
-            # Extraction dates depuis PDF OCRisé (si disponible) ou texte principal
-            print("  [DATES] Recherche...", end=" ", flush=True)
-            if tmp_pdf:
-                # Extraire les dates depuis le PDF OCRisé
-                with pdfplumber.open(tmp_pdf) as pdf:
-                    pdf_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-                dates = extract_dates(pdf_text)
-            else:
-                dates = extract_dates(text_primary)
+            # ========== ANALYSE LLAVA (AVANT RECHERCHE DE DATE) ==========
+            # Llava analyse la 1ère page et fournit contexte visuel
+            vision_analysis = None
+            image_for_vision = None
+            
+            # Déterminer quelle image utiliser pour la vision (PREMIÈRE PAGE UNIQUEMENT)
+            if ext in [".png", ".jpg", ".jpeg"]:
+                # Image directe = déjà une seule page
+                image_for_vision = str(file_path)
+            elif ext == ".pdf" and tmp_pdf:
+                # Extraire UNIQUEMENT la première page du PDF en image pour llava
+                try:
+                    images = []
+                    with pdfplumber.open(tmp_pdf) as pdf:
+                        if pdf.pages:
+                            # Convertir PREMIÈRE PAGE uniquement
+                            img = pdf.pages[0].to_image(resolution=300).original
+                            if img:
+                                images.append(img)
+                    
+                    # Fallback avec pdf2image si besoin (aussi première page uniquement)
+                    if not images and PDF2IMAGE_AVAILABLE:
+                        images = convert_from_path(tmp_pdf, dpi=300, first_page=1, last_page=1)
+                    
+                    if images:
+                        # Sauvegarder temporairement l'image de la 1ère page
+                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
+                            images[0].save(tmp_img.name)
+                            image_for_vision = tmp_img.name
+                            _temp_files.append(tmp_img.name)
+                except:
+                    image_for_vision = None
+            
+            # Appeler llava si une image est disponible
+            if image_for_vision:
+                print("  [LLAVA] Analyse vision (1ère page)...", end=" ", flush=True)
+                vision_analysis = analyze_llava(image_for_vision, model="llava:latest")
+                if vision_analysis:
+                    print(f"✓ ({len(vision_analysis)} chars)")
+                else:
+                    print("✗")
+            
+            # ========== EXTRACTION DATES (AVEC TESSERACT + LLAVA) ==========
+            # Combine Tesseract OCR + description Llava pour meilleure détection
+            print("  [DATES] Recherche (Tesseract + Llava)...", end=" ", flush=True)
+            # Texte combiné pour recherche de date
+            combined_text = text_primary
+            if vision_analysis:
+                # Ajouter la description llava au texte pour recherche de date
+                combined_text = vision_analysis + "\n" + text_primary
+            
+            dates = extract_dates(combined_text)
             print(f"{len(dates)} trouvée(s)")
             
-            # Analyse Ollama passe 1 (strict sur texte OCR)
+            # RE-GÉNÉRER les PDF OCRisés avec la description vision intégrée
+            if vision_analysis:
+                print("  [PDF] Régénération avec enrichissement vision...", end=" ", flush=True)
+                try:
+                    if ext == ".pdf":
+                        # Régénérer le PDF avec vision intégrée
+                        text_primary, tmp_pdf = ocr_pdf(file_path, vision_description=vision_analysis)
+                        print("✓")
+                    elif ext in [".png", ".jpg", ".jpeg"]:
+                        # Régénérer le PDF image avec vision intégrée
+                        text_primary, tmp_pdf = extract_from_image(file_path, vision_description=vision_analysis)
+                        print("✓")
+                except Exception as e:
+                    print(f"✗ ({e})")
+                    # Continuer avec les PDFs générés précédemment
+            
+            # Analyse Ollama passe 1 (avec analyse vision optionnelle)
             print("  [OLLAMA] Passe 1 (initial)...", end=" ", flush=True)
-            analysis = analyze_ollama(text_primary, dates, config["OLLAMA_MODEL"], pass_level="initial")
+            analysis = analyze_ollama(text_primary, dates, config["OLLAMA_MODEL"], 
+                                      vision_analysis=vision_analysis, pass_level="initial",
+                                      original_filename=file_path.name)
             inst, obj, date, certitude = parse_analysis(analysis, extract_first_page(text_primary))
             print(f"{'✓' if certitude else '⚠'}")
             
             # Passe 2 : si certitude insuffisante ET source alternative disponible
             if not certitude and text_fallback:
                 print("  [OLLAMA] Passe 2 (fallback)...", end=" ", flush=True)
-                analysis2 = analyze_ollama(text_fallback, dates, config["OLLAMA_MODEL"], pass_level="fallback")
+                analysis2 = analyze_ollama(text_fallback, dates, config["OLLAMA_MODEL"], 
+                                          vision_analysis=vision_analysis, pass_level="fallback",
+                                          original_filename=file_path.name)
                 inst2, obj2, date2, certitude2 = parse_analysis(analysis2, extract_first_page(text_fallback))
                 if certitude2:
                     inst, obj, date, certitude = inst2, obj2, date2, certitude2
@@ -845,7 +1068,11 @@ def main():
                 failure_msg = f"{file_path.name} → {failure_name} ({inst} | {obj} | {date})"
                 print(f"  └─ FICHIER REJETÉ: {failure_msg}")
                 shutil.copy2(str(file_path), str(failure / failure_name))
-                if tmp_pdf:
+                # Copier aussi le PDF OCRisé en cas d'échec (pour consultation ultérieure)
+                if tmp_pdf and os.path.exists(tmp_pdf):
+                    pdf_failure_name = generate_name(inst or "inconnu", obj or "inconnu", failure_date, ".pdf")
+                    shutil.copy2(tmp_pdf, str(failure / pdf_failure_name))
+                    print(f"  └─ PDF OCRisé copié: {pdf_failure_name}")
                     _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
                 with open(log_path, 'a', newline='', encoding='utf-8') as f:
                     csv.writer(f).writerow([file_path.name, "Échec", failure_name, inst, obj, date])
