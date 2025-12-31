@@ -899,7 +899,10 @@ def analyze_ollama(text, dates, model, vision_analysis=None, pass_level="initial
     
     try:
         response = ollama.generate(model=model, prompt=prompt, stream=False)
-        return response.get("response", "").strip()
+        result = response.get("response", "").strip()
+        # Debug: afficher la réponse brute
+        print(f"      📝 Réponse IA: {result[:200]}..." if len(result) > 200 else f"      📝 Réponse IA: {result}")
+        return result
     except Exception as e:
         print(f"      ❌ Erreur Ollama: {e}")
         return None
@@ -989,23 +992,27 @@ def parse_analysis(text, first_page_text=None):
     obj_variants = []
     date = "inconnu"
     
-    # Parser strictement chaque ligne
+    # Parser chaque ligne en nettoyant les préfixes markdown/tirets
     for line in text.splitlines():
-        line_lower = line.lower()
+        # Nettoyer la ligne: supprimer **, -, →, *, etc. au début
+        clean_line = re.sub(r'^[\s\*\-→•]+', '', line).strip()
+        # Supprimer aussi les ** autour des mots clés
+        clean_line = clean_line.replace('**', '')
+        line_lower = clean_line.lower()
         
-        # Institution - accepter "Institution 1:", "Institution variante 1:", etc.
+        # Institution - accepter "Institution 1:", "Institution variante 1:", "Institution:", etc.
         if line_lower.startswith("institution"):
             # Ignorer les lignes qui ne contiennent pas de valeur (juste un numéro)
-            if ":" in line:
-                value = line.split(":", 1)[1].strip()
+            if ":" in clean_line:
+                value = clean_line.split(":", 1)[1].strip()
                 value = re.sub(r'\s*[\(\[].*$', '', value).strip()
                 if value and value.lower() not in ("", "inconnu"):
                     inst_variants.append(value)
         
         # Objet - accepter "Objet 1:", "Objet variante 1:", etc.
         elif line_lower.startswith("objet"):
-            if ":" in line:
-                value = line.split(":", 1)[1].strip()
+            if ":" in clean_line:
+                value = clean_line.split(":", 1)[1].strip()
                 value = re.sub(r'\s*[\(\[].*$', '', value).strip()
                 if value and value.lower() not in ("", "inconnu"):
                     obj_variants.append(value)
@@ -1013,10 +1020,10 @@ def parse_analysis(text, first_page_text=None):
         # Date - accepter plusieurs formats
         elif line_lower.startswith("date"):
             # Extraire après le premier : s'il existe
-            if ":" in line:
-                value = line.split(":", 1)[1].strip()
+            if ":" in clean_line:
+                value = clean_line.split(":", 1)[1].strip()
             else:
-                value = line.strip()
+                value = clean_line.strip()
             value = re.sub(r'\s*[\(\[].*$', '', value).strip()
             
             # Format YYYY-MM direct
