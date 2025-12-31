@@ -643,9 +643,8 @@ def enrich_pdf_with_vision_text(pdf_path, vision_text, ocr_text=None):
         reader = PdfReader(pdf_path)
         writer = PdfWriter()
         
-        # Copier toutes les pages
-        for page in reader.pages:
-            writer.add_page(page)
+        # Cloner le document complet pour préserver les images et ressources
+        writer.append(reader)
         
         # Préparer le texte pour les métadonnées
         # Limiter la taille pour éviter des métadonnées trop volumineuses
