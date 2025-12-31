@@ -55,6 +55,94 @@ try:
 except:
     PDF2IMAGE_AVAILABLE = False
 
+try:
+    import dbus
+    DBUS_AVAILABLE = True
+except:
+    DBUS_AVAILABLE = False
+
+# ========== INHIBITEUR DE VEILLE ==========
+
+class SleepInhibitor:
+    """Empêche le système de se mettre en veille pendant le traitement.
+    
+    Utilise DBus (org.freedesktop.ScreenSaver).
+    """
+    
+    def __init__(self, reason="Traitement de documents en cours"):
+        self.reason = reason
+        self.cookie = None
+        self.active = False
+    
+    def __enter__(self):
+        self.inhibit()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.uninhibit()
+        return False
+    
+    def inhibit(self):
+        """Active l'inhibition de la mise en veille."""
+        if self.active:
+            return
+        
+        if DBUS_AVAILABLE:
+            try:
+                bus = dbus.SessionBus()
+                for service in ['org.freedesktop.ScreenSaver', 'org.gnome.ScreenSaver', 'org.kde.Solid.PowerManagement.PolicyAgent']:
+                    try:
+                        proxy = bus.get_object(service, '/' + service.replace('.', '/'))
+                        iface = dbus.Interface(proxy, service)
+                        self.cookie = iface.Inhibit('RenAIme', self.reason)
+                        self.active = True
+                        return
+                    except dbus.exceptions.DBusException:
+                        continue
+            except Exception:
+                pass
+    
+    def uninhibit(self):
+        """Désactive l'inhibition de la mise en veille."""
+        if not self.active:
+            return
+        
+        if self.cookie is not None and DBUS_AVAILABLE:
+            try:
+                bus = dbus.SessionBus()
+                for service in ['org.freedesktop.ScreenSaver', 'org.gnome.ScreenSaver', 'org.kde.Solid.PowerManagement.PolicyAgent']:
+                    try:
+                        proxy = bus.get_object(service, '/' + service.replace('.', '/'))
+                        iface = dbus.Interface(proxy, service)
+                        iface.UnInhibit(self.cookie)
+                        break
+                    except dbus.exceptions.DBusException:
+                        continue
+            except Exception:
+                pass
+            self.cookie = None
+        
+        self.active = False
+
+# Instance globale pour l'inhibiteur
+_sleep_inhibitor = None
+
+def start_sleep_inhibitor():
+    """Démarre l'inhibiteur de veille."""
+    global _sleep_inhibitor
+    if _sleep_inhibitor is None:
+        _sleep_inhibitor = SleepInhibitor()
+        _sleep_inhibitor.inhibit()
+        if _sleep_inhibitor.active:
+            print("💤 Mise en veille désactivée pendant le traitement")
+
+def stop_sleep_inhibitor():
+    """Arrête l'inhibiteur de veille."""
+    global _sleep_inhibitor
+    if _sleep_inhibitor is not None:
+        _sleep_inhibitor.uninhibit()
+        _sleep_inhibitor = None
+
 # ========== CONFIGURATION ==========
 
 SCRIPT_DIR = Path(__file__).parent
@@ -1107,6 +1195,9 @@ def main():
     ensure_models()
     config = load_config()
     
+    # Empêcher la mise en veille pendant le traitement
+    start_sleep_inhibitor()
+    
     # Dossier source avec défaut
     source_dir = config.get("SOURCE_DIR", "documents")
     choix = input(f"Dossier source [{source_dir}]: ").strip()
@@ -1380,13 +1471,16 @@ def main():
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrompu par l'utilisateur")
         cleanup_temp_files()
+        stop_sleep_inhibitor()
         sys.exit(130)
     except Exception as e:
         print(f"\n❌ Erreur inattendue: {e}")
         cleanup_temp_files()
+        stop_sleep_inhibitor()
         raise
     finally:
         cleanup_temp_files()
+        stop_sleep_inhibitor()
         print("\n✅ Exécution terminée.")
 
 if __name__ == "__main__":
