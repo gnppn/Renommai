@@ -468,18 +468,23 @@ def create_searchable_pdf_from_original(original_path):
             images = convert_from_path(str(original_path), dpi=300)
             if not images:
                 return None, None
-            pdf_bytes_all = b""
+            from pypdf import PdfReader, PdfWriter
+            pdf_pages = []
             full_text = ""
             for img in images:
                 img_processed = preprocess_image_for_ocr(img)
                 full_text += pytesseract.image_to_string(img_processed, lang="fra") + "\n"
                 pdf_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
                 if pdf_bytes:
-                    pdf_bytes_all += pdf_bytes
-            if not pdf_bytes_all:
+                    pdf_pages.append(pdf_bytes)
+            if not pdf_pages:
                 return None, None
+            writer = PdfWriter()
+            for page_bytes in pdf_pages:
+                reader = PdfReader(BytesIO(page_bytes))
+                writer.add_page(reader.pages[0])
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-                tmp.write(pdf_bytes_all)
+                writer.write(tmp)
                 tmp_path = tmp.name
                 _temp_files.append(tmp_path)
             return full_text, tmp_path
