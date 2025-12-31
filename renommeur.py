@@ -339,30 +339,13 @@ def ensure_models():
 
 def preprocess_image_for_ocr(img):
     """Prétraitement image pour améliorer l'OCR."""
+    # Conversion en niveaux de gris
     img = img.convert('L')
+    # Filtre médian pour réduire le bruit
     img = img.filter(ImageFilter.MedianFilter(size=3))
-    
-    if CV2_AVAILABLE:
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_GRAY2BGR) if len(np.array(img).shape) == 2 else np.array(img)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        img_cv_gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        img_cv_gray = clahe.apply(img_cv_gray)
-        img = Image.fromarray(img_cv_gray)
-        
-        img = ImageEnhance.Contrast(img).enhance(1.5)
-        
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_GRAY2BGR) if len(np.array(img).shape) == 2 else np.array(img)
-        img_cv_gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY) if len(img_cv.shape) == 3 else img_cv
-        _, img_cv_gray = cv2.threshold(img_cv_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        img = Image.fromarray(img_cv_gray)
-        
-        img_cv = np.array(img)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        img_cv = cv2.morphologyEx(img_cv, cv2.MORPH_CLOSE, kernel)
-        img = Image.fromarray(img_cv)
-    else:
-        img = ImageEnhance.Contrast(img).enhance(1.5)
-    
+    # Léger rehaussement de contraste
+    img = ImageEnhance.Contrast(img).enhance(1.2)
+    # Léger rehaussement de netteté
     img = img.filter(ImageFilter.SHARPEN)
     return img
 
@@ -479,77 +462,26 @@ def create_searchable_pdf_from_original(original_path):
         full_text = ""
         
         if ext == ".pdf":
-            # PDF original - on travaille page par page
-            if not PYPDF_AVAILABLE:
-                return _ocr_pdf_fallback(original_path)
-            
-            images = []
-            
-            # Extraire les images du PDF original
-            try:
-                with pdfplumber.open(original_path) as pdf:
-                    if pdf.pages:
-                        for page in pdf.pages:
-                            try:
-                                img = page.to_image(resolution=300).original
-                                if img:
-                                    images.append(img)
-                            except:
-                                pass
-            except:
-                images = []
-            
-            if (not images or len(images) < 2) and PDF2IMAGE_AVAILABLE:
-                try:
-                    images = convert_from_path(str(original_path), dpi=300)
-                except:
-                    pass
-            
+            # PDF original - OCR multi-pages via Tesseract uniquement
+            if not PDF2IMAGE_AVAILABLE:
+                return None, None
+            images = convert_from_path(str(original_path), dpi=300)
             if not images:
                 return None, None
-            
-            # Lire le PDF original pour préserver la qualité
-            original_reader = PdfReader(original_path)
-            writer = PdfWriter()
-            
-            for page_idx, (original_page, img) in enumerate(zip(original_reader.pages, images)):
-                # Rotation automatique si nécessaire
-                try:
-                    osd = pytesseract.image_to_osd(img)
-                    m = re.search(r"Rotate:\s*(\d+)", osd)
-                    if m:
-                        rot = int(m.group(1))
-                        if rot:
-                            img = img.rotate(360 - rot, expand=True)
-                except:
-                    pass
-                
-                # Prétraitement pour OCR
+            pdf_bytes_all = b""
+            full_text = ""
+            for img in images:
                 img_processed = preprocess_image_for_ocr(img)
-                text = pytesseract.image_to_string(img_processed, lang="fra")
-                full_text += text + "\n"
-                
-                # Créer la couche OCR invisible
-                pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
-                
-                if pdf_ocr_bytes:
-                    try:
-                        reader_ocr = PdfReader(BytesIO(pdf_ocr_bytes))
-                        if reader_ocr.pages:
-                            # Fusionner couche OCR sur la page originale
-                            original_page.merge_page(reader_ocr.pages[0])
-                    except:
-                        pass
-                
-                writer.add_page(original_page)
-            
-            # Sauvegarder le PDF final
+                full_text += pytesseract.image_to_string(img_processed, lang="fra") + "\n"
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+                if pdf_bytes:
+                    pdf_bytes_all += pdf_bytes
+            if not pdf_bytes_all:
+                return None, None
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                tmp.write(pdf_bytes_all)
                 tmp_path = tmp.name
                 _temp_files.append(tmp_path)
-                with open(tmp_path, 'wb') as f:
-                    writer.write(f)
-            
             return full_text, tmp_path
         
         elif ext in [".png", ".jpg", ".jpeg"]:
@@ -912,11 +844,9 @@ def simplify_institution_name(name):
     if not name:
         return name
     cleaned = name.strip()
-    # Supprimer articles au début
-    cleaned = re.sub(r"^(la|le|les|l'|the)\s+", "", cleaned, flags=re.IGNORECASE)
     # Supprimer formes juridiques (avec ou sans points): S.A., S.A.S., SA, SAS, SARL, etc.
     cleaned = re.sub(
-        r"\s+(s\.?a\.?(?:s\.?)?|sarl|scs|snc|sca|gmbh|inc\.?|ltd\.?|plc|llc|corp\.?|company|limited|anonyme|soci[eé]t[eé])\s*$",
+        r"\s+(s\.?a\.?(:?s\.?)?|sarl|scs|snc|sca|gmbh|inc\.?|ltd\.?|plc|llc|corp\.?|company|limited|anonyme|soci[eé]t[eé])\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -1024,24 +954,31 @@ def parse_analysis(text, first_page_text=None):
             else:
                 value = clean_line.strip()
             value = re.sub(r'\s*[\(\[].*$', '', value).strip()
-            
             # Format YYYY-MM direct
             if re.match(r"^\d{4}-\d{2}$", value):
                 date = value
+            elif re.match(r"^\d{4}$", value):
+                # Si année seule, compléter avec -01
+                date = f"{value}-01"
             elif value.lower() != "inconnu":
                 # Format YYYY-MM dans le texte
                 match = re.search(r"(\d{4})-(\d{2})", value)
                 if match:
                     date = f"{match.group(1)}-{match.group(2)}"
                 else:
-                    # Format DD/MM/YY ou DD/MM/YYYY
-                    match = re.search(r"(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})", value)
+                    # Format YYYY
+                    match = re.search(r"(\d{4})", value)
                     if match:
-                        day, month, year = match.groups()
-                        # Convertir année 2 chiffres en 4 chiffres
-                        if len(year) == 2:
-                            year = "20" + year if int(year) < 50 else "19" + year
-                        date = f"{year}-{month.zfill(2)}"
+                        date = f"{match.group(1)}-01"
+                    else:
+                        # Format DD/MM/YY ou DD/MM/YYYY
+                        match = re.search(r"(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})", value)
+                        if match:
+                            day, month, year = match.groups()
+                            # Convertir année 2 chiffres en 4 chiffres
+                            if len(year) == 2:
+                                year = "20" + year if int(year) < 50 else "19" + year
+                            date = f"{year}-{month.zfill(2)}"
     
     # Assurer au moins 3 variantes (remplir avec "inconnu")
     while len(inst_variants) < 3:
