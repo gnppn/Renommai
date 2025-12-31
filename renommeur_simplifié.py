@@ -427,11 +427,48 @@ def _ocr_pdf_fallback(path):
         # OCR et création PDF simple (sans fusion avec original)
         page_pdfs = []
         for img in images:
-            img = preprocess_image_for_ocr(img)
-            full_text += pytesseract.image_to_string(img, lang="fra") + "\n"
-            page_pdfs.append(create_searchable_pdf_page(img))
-        
+            # Détecter et corriger la rotation (si présente)
+            try:
+                osd = pytesseract.image_to_osd(img)
+                m = re.search(r"Rotate:\s*(\d+)", osd)
+                if m:
+                    rot = int(m.group(1))
+                    if rot:
+                        img = img.rotate(360 - rot, expand=True)
+            except Exception:
+                pass
+
+            img_proc = preprocess_image_for_ocr(img)
+            # Try French then French+English as fallback
+            txt = pytesseract.image_to_string(img_proc, lang="fra")
+            if not txt.strip():
+                txt = pytesseract.image_to_string(img_proc, lang="fra+eng")
+            full_text += txt + "\n"
+            page_pdfs.append(create_searchable_pdf_page(img_proc))
+
         if not full_text.strip():
+            # Sauvegarder image de debug (première page) pour diagnostic
+            try:
+                debug_dir = Path("debug_failures")
+                debug_dir.mkdir(exist_ok=True)
+                stem = Path(path).stem
+                debug_sub = debug_dir / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                debug_sub.mkdir(exist_ok=True)
+                images[0].save(debug_sub / 'page1_raw.png')
+                try:
+                    osd = pytesseract.image_to_osd(images[0])
+                    m = re.search(r"Rotate:\s*(\d+)", osd)
+                    rot = int(m.group(1)) if m else 0
+                except Exception:
+                    rot = 0
+                corrected = images[0].rotate(360 - rot, expand=True) if rot else images[0]
+                corrected.save(debug_sub / 'page1_corrected.png')
+                try:
+                    (debug_sub / 'page1_corrected.txt').write_text(pytesseract.image_to_string(corrected, lang='fra+eng'), encoding='utf-8')
+                except Exception:
+                    pass
+            except Exception:
+                pass
             return None, None
         
         # Assembler les pages
@@ -463,21 +500,66 @@ def create_searchable_pdf_from_original(original_path):
         
         if ext == ".pdf":
             # PDF original - OCR multi-pages via Tesseract uniquement
+            # If pdf2image is not available, use the pdfplumber fallback OCR
             if not PDF2IMAGE_AVAILABLE:
-                return None, None
-            images = convert_from_path(str(original_path), dpi=300)
+                return _ocr_pdf_fallback(original_path)
+
+            try:
+                images = convert_from_path(str(original_path), dpi=300)
+            except Exception:
+                # Fallback to pdfplumber-based OCR
+                return _ocr_pdf_fallback(original_path)
             if not images:
-                return None, None
+                return _ocr_pdf_fallback(original_path)
             from pypdf import PdfReader, PdfWriter
             pdf_pages = []
             full_text = ""
             for img in images:
+                # Détecter et corriger la rotation avant OCR
+                try:
+                    osd = pytesseract.image_to_osd(img)
+                    m = re.search(r"Rotate:\s*(\d+)", osd)
+                    if m:
+                        rot = int(m.group(1))
+                        if rot:
+                            img = img.rotate(360 - rot, expand=True)
+                except Exception:
+                    pass
+
                 img_processed = preprocess_image_for_ocr(img)
                 full_text += pytesseract.image_to_string(img_processed, lang="fra") + "\n"
                 pdf_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
                 if pdf_bytes:
                     pdf_pages.append(pdf_bytes)
             if not pdf_pages:
+                # Sauvegarder image de debug (première page) pour diagnostic
+                try:
+                    debug_dir = Path("debug_failures")
+                    debug_dir.mkdir(exist_ok=True)
+                    stem = Path(original_path).stem
+                    debug_sub = debug_dir / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    debug_sub.mkdir(exist_ok=True)
+                    # enregistrer la première page telle quelle
+                    first_img_path = debug_sub / "page1_raw.png"
+                    images[0].save(first_img_path)
+                    # tenter détection/rotation et sauvegarde
+                    try:
+                        osd = pytesseract.image_to_osd(images[0])
+                        m = re.search(r"Rotate:\s*(\d+)", osd)
+                        rot = int(m.group(1)) if m else 0
+                    except Exception:
+                        rot = 0
+                    try:
+                        corrected = images[0].rotate(360 - rot, expand=True) if rot else images[0]
+                        corrected_path = debug_sub / "page1_corrected.png"
+                        corrected.save(corrected_path)
+                        # OCR both languages as fallback
+                        txt = pytesseract.image_to_string(corrected, lang="fra+eng")
+                        (debug_sub / "page1_corrected.txt").write_text(txt, encoding='utf-8')
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 return None, None
             writer = PdfWriter()
             for page_bytes in pdf_pages:
@@ -1294,7 +1376,21 @@ def main():
                 failure_name = generate_name(inst or "inconnu", obj or "inconnu", failure_date, ext)
                 print("      ❌ ÉCHEC - Champs manquants ou date invalide")
                 print(f"      └─ Fichier rejeté: {failure_name}")
-                shutil.copy2(str(file_path), str(failure / failure_name))
+                target_path = failure / failure_name
+                try:
+                    # Attempt copy; handle unexpected filename characters
+                    shutil.copy2(str(file_path), str(target_path))
+                except Exception as e:
+                    # Fallback: sanitize filename more aggressively and retry
+                    safe_name = re.sub(r"[\n\r\t]+", " ", failure_name)
+                    safe_name = re.sub(r"\s+", " ", safe_name).strip()
+                    safe_name = re.sub(r'[\\/*?:"<>|]', '', safe_name)
+                    target_path = failure / safe_name
+                    try:
+                        shutil.copy2(str(file_path), str(target_path))
+                        print(f"      ⚠️ Filename adjusted to: {safe_name}")
+                    except Exception as e2:
+                        print(f"      ❌ Impossible de copier le fichier vers {target_path}: {e2}")
                 # Copier aussi le PDF OCRisé en cas d'échec (pour consultation ultérieure)
                 if tmp_pdf and os.path.exists(tmp_pdf):
                     pdf_failure_name = generate_name(inst or "inconnu", obj or "inconnu", failure_date, ".pdf")
