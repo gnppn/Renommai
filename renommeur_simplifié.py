@@ -169,7 +169,6 @@ def get_model_context_size(model_name):
             line_lower = line.lower()
             if 'context' in line_lower or 'num_ctx' in line_lower:
                 # Extraire le nombre
-                import re
                 numbers = re.findall(r'\d+', line)
                 if numbers:
                     ctx_size = int(numbers[-1])
@@ -220,8 +219,6 @@ def load_prompt(name, model_name=None):
 
 DEFAULT_CONFIG = {
     "SOURCE_DIR": "documents",
-    "EXPORT_DIR": "Export",
-    "FAILURE_DIR": "Echec",
     "OLLAMA_MODEL": "llama3:8b-instruct-q4_0",
 }
 
@@ -289,9 +286,6 @@ def ensure_models():
         out = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, text=True, check=True)
         available_models = [l.split()[0] for l in out.stdout.splitlines()[1:] if l.strip()]
         
-        # Séparer modèles vision (llava, minicpm-v) et texte (autres)
-        text_models = [m for m in available_models if not m.startswith(('llava', 'minicpm-v'))]
-        
         if available_models:
             print("      ✅ Modèles disponibles")
         else:
@@ -307,6 +301,7 @@ def ensure_models():
         
         # Télécharger le modèle vision si absent
         vision_models = [m for m in available_models if m.startswith(('llava', 'minicpm-v'))]
+        text_models = [m for m in available_models if not m.startswith(('llava', 'minicpm-v'))]
         if not vision_models or selected_vision not in vision_models:
             print(f"      ⬇️  Téléchargement {selected_vision}...")
             try:
@@ -389,15 +384,44 @@ def create_searchable_pdf_page(img):
                     output = BytesIO()
                     writer.write(output)
                     return output.getvalue()
-            except Exception as e:
+            except Exception:
                 return pdf_ocr_bytes
         
         return pdf_ocr_bytes
     
-    except Exception as e:
+    except Exception:
         pdf_out = BytesIO()
         img.convert('RGB').save(pdf_out, format='PDF')
         return pdf_out.getvalue()
+
+
+def _save_debug_images(images, path_stem):
+    """Sauvegarde les images de debug pour diagnostic OCR."""
+    try:
+        debug_dir = Path("debug_failures")
+        debug_dir.mkdir(exist_ok=True)
+        debug_sub = debug_dir / f"{path_stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        debug_sub.mkdir(exist_ok=True)
+        
+        images[0].save(debug_sub / 'page1_raw.png')
+        
+        try:
+            osd = pytesseract.image_to_osd(images[0])
+            m = re.search(r"Rotate:\s*(\d+)", osd)
+            rot = int(m.group(1)) if m else 0
+        except Exception:
+            rot = 0
+        
+        corrected = images[0].rotate(360 - rot, expand=True) if rot else images[0]
+        corrected.save(debug_sub / 'page1_corrected.png')
+        
+        try:
+            txt = pytesseract.image_to_string(corrected, lang='fra+eng')
+            (debug_sub / 'page1_corrected.txt').write_text(txt, encoding='utf-8')
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def _ocr_pdf_fallback(path):
@@ -447,28 +471,7 @@ def _ocr_pdf_fallback(path):
             page_pdfs.append(create_searchable_pdf_page(img_proc))
 
         if not full_text.strip():
-            # Sauvegarder image de debug (première page) pour diagnostic
-            try:
-                debug_dir = Path("debug_failures")
-                debug_dir.mkdir(exist_ok=True)
-                stem = Path(path).stem
-                debug_sub = debug_dir / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                debug_sub.mkdir(exist_ok=True)
-                images[0].save(debug_sub / 'page1_raw.png')
-                try:
-                    osd = pytesseract.image_to_osd(images[0])
-                    m = re.search(r"Rotate:\s*(\d+)", osd)
-                    rot = int(m.group(1)) if m else 0
-                except Exception:
-                    rot = 0
-                corrected = images[0].rotate(360 - rot, expand=True) if rot else images[0]
-                corrected.save(debug_sub / 'page1_corrected.png')
-                try:
-                    (debug_sub / 'page1_corrected.txt').write_text(pytesseract.image_to_string(corrected, lang='fra+eng'), encoding='utf-8')
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            _save_debug_images(images, Path(path).stem)
             return None, None
         
         # Assembler les pages
@@ -511,7 +514,6 @@ def create_searchable_pdf_from_original(original_path):
                 return _ocr_pdf_fallback(original_path)
             if not images:
                 return _ocr_pdf_fallback(original_path)
-            from pypdf import PdfReader, PdfWriter
             pdf_pages = []
             full_text = ""
             for img in images:
@@ -532,34 +534,7 @@ def create_searchable_pdf_from_original(original_path):
                 if pdf_bytes:
                     pdf_pages.append(pdf_bytes)
             if not pdf_pages:
-                # Sauvegarder image de debug (première page) pour diagnostic
-                try:
-                    debug_dir = Path("debug_failures")
-                    debug_dir.mkdir(exist_ok=True)
-                    stem = Path(original_path).stem
-                    debug_sub = debug_dir / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    debug_sub.mkdir(exist_ok=True)
-                    # enregistrer la première page telle quelle
-                    first_img_path = debug_sub / "page1_raw.png"
-                    images[0].save(first_img_path)
-                    # tenter détection/rotation et sauvegarde
-                    try:
-                        osd = pytesseract.image_to_osd(images[0])
-                        m = re.search(r"Rotate:\s*(\d+)", osd)
-                        rot = int(m.group(1)) if m else 0
-                    except Exception:
-                        rot = 0
-                    try:
-                        corrected = images[0].rotate(360 - rot, expand=True) if rot else images[0]
-                        corrected_path = debug_sub / "page1_corrected.png"
-                        corrected.save(corrected_path)
-                        # OCR both languages as fallback
-                        txt = pytesseract.image_to_string(corrected, lang="fra+eng")
-                        (debug_sub / "page1_corrected.txt").write_text(txt, encoding='utf-8')
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                _save_debug_images(images, Path(original_path).stem)
                 return None, None
             writer = PdfWriter()
             for page_bytes in pdf_pages:
@@ -737,6 +712,11 @@ def extract_from_xlsx(path):
 
 # ========== EXTRACTION DATES ==========
 
+def _year_2_to_4(year_2):
+    """Convertit une année sur 2 chiffres en 4 chiffres."""
+    year_int = int(year_2)
+    return f"20{year_2}" if year_int < 50 else f"19{year_2}"
+
 def extract_dates(text):
     """Extrait les dates valides au format YYYY-MM (max 5 candidates)."""
     if not text:
@@ -777,8 +757,7 @@ def extract_dates(text):
     for month_name, month_num in month_names.items():
         pattern = rf"\b(\d{{1,2}})\s+{month_name}\.?\s+(\d{{4}})\b"
         for day, year in re.findall(pattern, text, re.IGNORECASE):
-            day_int = int(day)
-            if 1 <= day_int <= 31:
+            if 1 <= int(day) <= 31:
                 add_date(year, month_num)
     
     # Format 2: "mois YYYY" sans jour (ex: "mars 2024", "décembre 2023")
@@ -791,63 +770,28 @@ def extract_dates(text):
     for year, month in re.findall(r"\b(\d{4})-(\d{2})(?:-\d{2})?\b", text):
         add_date(year, month)
     
-    # Format 4: DD/MM/YYYY
-    for day, month, year in re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            add_date(year, month)
+    # Formats DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY (séparateurs: / . -)
+    for sep in [r"/", r"\.", r"-"]:
+        # 4 chiffres pour l'année
+        for day, month, year in re.findall(rf"\b(\d{{1,2}}){sep}(\d{{1,2}}){sep}(\d{{4}})\b", text):
+            if 1 <= int(day) <= 31:
+                add_date(year, month)
+        # 2 chiffres pour l'année
+        for day, month, year in re.findall(rf"\b(\d{{1,2}}){sep}(\d{{1,2}}){sep}(\d{{2}})\b", text):
+            if 1 <= int(day) <= 31:
+                add_date(_year_2_to_4(year), month)
     
-    # Format 4b: DD/MM/YY (année sur 2 chiffres)
-    for day, month, year in re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{2})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            # Convertir année 2 chiffres en 4 chiffres
-            year_int = int(year)
-            full_year = f"20{year}" if year_int < 50 else f"19{year}"
-            add_date(full_year, month)
-    
-    # Format 5: DD.MM.YYYY (format européen avec points)
-    for day, month, year in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            add_date(year, month)
-    
-    # Format 5b: DD.MM.YY (année sur 2 chiffres)
-    for day, month, year in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            year_int = int(year)
-            full_year = f"20{year}" if year_int < 50 else f"19{year}"
-            add_date(full_year, month)
-    
-    # Format 6: DD-MM-YYYY (format avec tirets)
-    for day, month, year in re.findall(r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            add_date(year, month)
-    
-    # Format 6b: DD-MM-YY (année sur 2 chiffres)
-    for day, month, year in re.findall(r"\b(\d{1,2})-(\d{1,2})-(\d{2})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
-            year_int = int(year)
-            full_year = f"20{year}" if year_int < 50 else f"19{year}"
-            add_date(full_year, month)
-    
-    # Format 7: YYYY/MM/DD
+    # Format YYYY/MM/DD
     for year, month, day in re.findall(r"\b(\d{4})/(\d{1,2})/(\d{1,2})\b", text):
-        day_int = int(day)
-        if 1 <= day_int <= 31:
+        if 1 <= int(day) <= 31:
             add_date(year, month)
     
-    # Format 8: YYYY seul (fallback, moins précis)
+    # Format YYYY seul (fallback, moins précis)
     if not dates:
         for century, year_suffix in re.findall(r"\b(19|20)(\d{2})\b", text):
             full_year = century + year_suffix
-            full_year_int = int(full_year)
-            if min_year <= full_year_int <= max_year:
-                if full_year not in dates:
-                    dates.append(full_year)
+            if min_year <= int(full_year) <= max_year and full_year not in dates:
+                dates.append(full_year)
     
     return dates[:5]  # Maximum 5 dates candidates
 
@@ -1056,8 +1000,8 @@ def parse_analysis(text, first_page_text=None):
                 if value and value.lower() not in ("", "inconnu"):
                     inst_variants.append(value)
         
-        # Objet - accepter "Objet 1:", "Objet variante 1:", etc.
-        elif line_lower.startswith("objet"):
+        # Objet - accepter "Objet 1:", "Object 1:", etc.
+        elif line_lower.startswith("objet") or line_lower.startswith("object"):
             if ":" in clean_line:
                 value = clean_line.split(":", 1)[1].strip()
                 value = re.sub(r'\s*[\(\[].*$', '', value).strip()
@@ -1084,19 +1028,19 @@ def parse_analysis(text, first_page_text=None):
                 if match:
                     date = f"{match.group(1)}-{match.group(2)}"
                 else:
-                    # Format YYYY
-                    match = re.search(r"(\d{4})", value)
+                    # Format DD/MM/YY ou DD/MM/YYYY - TESTER AVANT année seule
+                    match = re.search(r"(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})", value)
                     if match:
-                        date = f"{match.group(1)}-01"
+                        day, month, year = match.groups()
+                        # Convertir année 2 chiffres en 4 chiffres
+                        if len(year) == 2:
+                            year = "20" + year if int(year) < 50 else "19" + year
+                        date = f"{year}-{month.zfill(2)}"
                     else:
-                        # Format DD/MM/YY ou DD/MM/YYYY
-                        match = re.search(r"(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})", value)
+                        # Format YYYY seul (fallback)
+                        match = re.search(r"(\d{4})", value)
                         if match:
-                            day, month, year = match.groups()
-                            # Convertir année 2 chiffres en 4 chiffres
-                            if len(year) == 2:
-                                year = "20" + year if int(year) < 50 else "19" + year
-                            date = f"{year}-{month.zfill(2)}"
+                            date = f"{match.group(1)}-01"
     
     # Assurer au moins 3 variantes (remplir avec "inconnu")
     while len(inst_variants) < 3:

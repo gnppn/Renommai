@@ -50,15 +50,15 @@ Référence client: 123456789
 
 Institution 1: Edf
 Institution 2: Edf Particuliers
-Object 1: Facture Electricite
-Object 2: Facture Energie
+Objet 1: Facture Electricite
+Objet 2: Facture Energie
 Date: 2024-03
 """
 
     invalid = """This is a free-form text output without the tags.
 Some header lines and content.
 Institution: Edf
-Object: Facture
+Objet: Facture
 Date: 07/06/13
 """
 
