@@ -15,6 +15,28 @@
  - L'IA tente d'harmoniser-simplifier la sortie.
  - Ecrit pour un vieux laptop peu puissant.
 
+## Scripts disponibles
+
+### `renommeur.py` - Version principale
+Script standard qui laisse l'IA extraire librement l'Institution et l'Objet.
+
+```bash
+python renommeur.py
+```
+
+### `renommeur_categories_fixes.py` - Version expérimentale 🧪
+Script avec **listes restrictives** pour normaliser les résultats :
+- **categories_documents.txt** : ~100 types de documents administratifs prédéfinis (impôts, banque, assurance, salariat, etc.)
+- **institutions_cache.txt** : ~250 variantes d'institutions connues (DGFIP, CPAM, banques, assureurs, etc.)
+
+L'IA est guidée par ces listes et les résultats sont automatiquement normalisés via fuzzy matching.
+
+```bash
+python renommeur_categories_fixes.py
+```
+
+> Voir [FICHIERS.md](FICHIERS.md) pour le détail des fichiers nécessaires à chaque script.
+
 ## Installation éclair
 
 ```bash

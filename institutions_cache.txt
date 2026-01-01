@@ -1,0 +1,132 @@
+# Cache des institutions connues
+# Format: Nom officiel | Variantes (séparées par des virgules)
+# L'IA doit utiliser ce cache pour normaliser les noms extraits des documents
+# Les lignes vides et commençant par # seul sont ignorées
+
+# === IMPÔTS ET ADMINISTRATION FISCALE ===
+Direction Générale des Finances Publiques | DGFIP, DGFiP, Finances Publiques, Impôts, Impots, SIP, Service des Impôts, tax, tax-related, fiscale, fiscal
+Trésor Public | Trésorerie, Perception
+Centre des Finances Publiques | Centre des Impôts
+
+# === SÉCURITÉ SOCIALE ===
+Caisse Primaire d'Assurance Maladie | CPAM, Assurance Maladie, Sécurité Sociale, Ameli
+Caisse d'Allocations Familiales | CAF, Allocations Familiales
+Caisse Nationale d'Assurance Vieillesse | CNAV, Assurance Retraite, L'Assurance Retraite
+URSSAF | Urssaf, Union de Recouvrement
+Mutualité Sociale Agricole | MSA
+Régime Social des Indépendants | RSI, SSI, Sécurité Sociale des Indépendants
+
+# === RETRAITE COMPLÉMENTAIRE ===
+Agirc-Arrco | AGIRC, ARRCO, Agirc Arrco
+Ircantec | IRCANTEC
+RAFP | Retraite Additionnelle Fonction Publique
+CNRACL | Caisse Nationale de Retraites des Agents des Collectivités Locales
+
+# === EMPLOI ===
+France Travail | Pôle Emploi, Pole Emploi, ANPE
+APEC | Association Pour l'Emploi des Cadres
+
+# === BANQUES ===
+BNP Paribas | BNP, BNPP
+Société Générale | SG, Socgen
+Crédit Agricole | CA, LCL, Crédit Lyonnais
+Crédit Mutuel | CM, CIC
+Caisse d'Épargne | CE, BPCE
+Banque Populaire | BP, BPCE
+La Banque Postale | Banque Postale, LBP
+HSBC | HSBC France
+Boursorama | Boursorama Banque
+Fortuneo | Fortuneo Banque
+ING | ING Direct
+N26 | N26 Bank
+Revolut | Revolut Bank
+Hello Bank | HelloBank
+
+# === ASSURANCES ===
+AXA | Axa France, AXA Assurances
+Allianz | Allianz France
+Groupama | Groupama Assurances
+MAIF | Maif
+MACIF | Macif
+MAAF | Maaf
+Matmut | Matmut Assurances
+GMF | GMF Assurances
+MMA | MMA Assurances
+Generali | Generali France
+Swiss Life | SwissLife
+AG2R La Mondiale | AG2R, La Mondiale
+Harmonie Mutuelle | Harmonie
+MGEN | Mutuelle Générale de l'Éducation Nationale
+April | April Assurances
+Crédit Agricole Assurances | Pacifica, Predica
+
+# === ÉNERGIE ===
+EDF | Électricité de France
+Engie | GDF, Gaz de France, Engie Home Services
+TotalEnergies | Total Direct Énergie, Total Énergies
+Eni | Eni Gas & Power
+Enercoop | Enercoop
+Planète Oui | Mint Énergie
+Veolia | Veolia Eau
+Suez | Suez Eau
+
+# === TÉLÉCOMMUNICATIONS ===
+Orange | France Télécom, Orange France, Sosh
+SFR | Société Française du Radiotéléphone, SFR RED
+Free | Free Mobile, Iliad
+Bouygues Telecom | Bouygues, B&You
+
+# === LOGEMENT ===
+Action Logement | 1% Logement
+ANIL | Agence Nationale pour l'Information sur le Logement
+ADIL | Agence Départementale d'Information sur le Logement
+
+# === ÉTAT ET ADMINISTRATION ===
+Préfecture | Préfecture de Police, Sous-Préfecture
+Mairie | Hôtel de Ville, Commune de
+Conseil Départemental | Département
+Conseil Régional | Région
+ANTS | Agence Nationale des Titres Sécurisés
+ANTAI | Agence Nationale de Traitement Automatisé des Infractions
+
+# === JUSTICE ===
+Tribunal Judiciaire | TJ, Tribunal de Grande Instance, TGI
+Tribunal de Commerce | TC
+Conseil de Prud'hommes | CPH, Prud'hommes
+Cour d'Appel | CA
+Cour de Cassation | Cassation
+Tribunal Administratif | TA
+
+# === NOTAIRES ET HUISSIERS ===
+Notaire | Office Notarial, Étude Notariale, SCP Notaires
+Huissier de Justice | Commissaire de Justice, Étude d'Huissier
+
+# === SANTÉ ===
+Hôpital | CHU, CHR, Centre Hospitalier, Hôpitaux de Paris, AP-HP
+Clinique | Centre Médical
+Laboratoire | Laboratoire d'Analyses, Labo
+
+# === ÉDUCATION ===
+Université | Faculté, UFR
+Lycée | Établissement Scolaire
+Collège | Établissement Scolaire
+École | Établissement Scolaire
+CROUS | Centre Régional des Œuvres Universitaires
+Rectorat | Académie de
+
+# === AUTOMOBILE ===
+ANTS | Agence Nationale des Titres Sécurisés
+Contrôle Technique | Dekra, Autosur, Sécuritest, Auto Sécurité, Autovision, Norisko
+
+# === DIVERS ===
+La Poste | Poste, Colissimo, Chronopost
+Amazon | Amazon.fr, Amazon France
+FNAC | Fnac.com
+Darty | Darty.com
+Leroy Merlin | LeroyMerlin
+Castorama | Casto
+IKEA | Ikea France
+Carrefour | Carrefour Market, Carrefour City
+Leclerc | E.Leclerc, Centre Leclerc
+Auchan | Auchan Retail
+Intermarché | ITM, Les Mousquetaires
