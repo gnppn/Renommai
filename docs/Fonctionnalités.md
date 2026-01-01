@@ -3,7 +3,7 @@
 ## 🎯 Objectif Global
 Script de tri et renommage automatique de documents (PDF, PNG, JPG, DOCX, XLSX) basé sur :
 - **OCR** : Extraction de texte via Tesseract
-- **Analyse Vision** : Pré-analyse visuelle via Llava (llava:latest)
+- **Analyse Vision** : Pré-analyse visuelle via modèle vision adaptatif (minicpm-v ou llava-llama3)
 - **Analyse IA** : Détection Institution/Objet/Date via Ollama (llama3)
 - **Renommage** : Génération automatique de noms fichiers selon le format `YYYY-MM Institution Objet.ext` (en Title Case)
 
@@ -51,7 +51,10 @@ Note: Les dossiers `Export_YYYYMMDD_HHMMSS/` et `Echec_YYYYMMDD_HHMMSS/` sont cr
 ### Vérification des Modèles Ollama
 
 Fonction : `ensure_models()`
-- **Modèles requis** : `llava:latest` et `llama3:8b-instruct-q4_0`
+- **Détection puissance système** : RAM + VRAM GPU (nvidia-smi)
+- **Sélection modèle vision adaptatif** :
+  - PC faible (low) : `minicpm-v:latest` - Léger et efficace
+  - PC moyen/puissant (medium/high) : `llava-llama3:latest` - Plus performant
 - Vérifie la présence des modèles via `ollama list`
 - **Téléchargement automatique** des modèles manquants via `ollama pull`
 - Affichage du statut pour chaque modèle (présent ou téléchargé)
@@ -151,11 +154,17 @@ Fonction : `create_searchable_pdf_page(img, vision_description=None)`
 - Génération PDF searchable
 - Retour : texte + chemin temp PDF
 
-#### 4️⃣ **Analyse Vision avec Llava (Pré-Analyse)**
+#### 4️⃣ **Analyse Vision avec modèle adaptatif (Pré-Analyse)**
 
 **⚠️ Effectuée AVANT extraction de dates et AVANT Ollama**
 
-Fonction : `analyze_llava(image_path, model="llava:latest")`
+Fonction : `analyze_vision(image_path, model=None)`
+
+##### Sélection du modèle vision
+- Fonction `get_system_power_level()` détecte RAM et VRAM
+- Fonction `select_vision_model()` choisit le modèle optimal :
+  - **PC faible** (RAM < 16GB, VRAM < 4GB) : `minicpm-v:latest`
+  - **PC moyen/puissant** : `llava-llama3:latest`
 
 ##### Objectif
 Analyser visuellement la PREMIÈRE PAGE UNIQUEMENT du document pour extraire une description concise (institution, type, date visibles).
@@ -165,15 +174,9 @@ Analyser visuellement la PREMIÈRE PAGE UNIQUEMENT du document pour extraire une
    - Pour images : utilisation directe du fichier
    - Pour PDF OCRisé : extraction de la 1ère page en image PNG temporaire
 2. **Encodage** : Image → base64
-3. **Prompt vision** :
-   ```
-   Ceci est la PREMIÈRE PAGE UNIQUEMENT d'un document administratif.
-   Décris brièvement en français son contenu.
-   Identifie: l'institution/émetteur, le type de document, la date si visible.
-   Sois concis et factuel. Maximum quelques phrases.
-   ```
-4. **Appel Llava** : `ollama.generate()` avec image encodée
-5. **Limite** : Maximum 1200 caractères de réponse
+3. **Prompt vision** (chargé depuis `prompts/vision_prompt.txt`)
+4. **Appel modèle vision** : `ollama.generate()` avec image encodée
+5. **Limite** : Maximum 4000 caractères de réponse
 
 ##### Usage
 - La description vision enrichit la recherche de dates
@@ -679,11 +682,19 @@ SOURCE_DIR/
 
 ### Analyse Vision
 
-#### `analyze_llava(image_path, model="llava:latest")`
+#### `analyze_vision(image_path, model=None)`
 - **Objectif** : Analyser visuellement la 1ère page d'un document
-- **Entrée** : Path image, modèle llava
+- **Entrée** : Path image, modèle vision (auto-sélectionné si None)
 - **Processus** : Encode base64 → prompt vision → ollama.generate
-- **Retour** : String description (max 1200 chars) ou None
+- **Retour** : String description (max 4000 chars) ou None
+
+#### `get_system_power_level()`
+- **Objectif** : Détecter puissance système (RAM + VRAM GPU)
+- **Retour** : Tuple (level, ram_gb, vram_gb) où level = 'low', 'medium', 'high'
+
+#### `select_vision_model(available_models)`
+- **Objectif** : Sélectionner modèle vision optimal selon puissance
+- **Retour** : Tuple (model_name, power_level, ram_gb, vram_gb)
 
 ### Optimisation Ollama
 
@@ -762,7 +773,7 @@ SOURCE_DIR/
 | Résolution OCR | 300 DPI | Qualité optimale pour documents texte |
 | Contraste Image | 1.5x | Renforcement pour texte clair |
 | Limite 1ère page | 3500 chars | Fenêtre contexte 4K |
-| Limite vision | 1200 chars | Description llava max |
+| Limite vision | 4000 chars | Description vision max |
 | Format Date | YYYY-MM | Année + mois minimum requis |
 | Plage Date | Actuelle -20ans | Filtrage dates obsolètes |
 | Kernel Morpho | 2x2 | Taille pour close operation |
