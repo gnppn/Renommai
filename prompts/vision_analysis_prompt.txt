@@ -1,0 +1,8 @@
+[INST]
+Tu es un expert en lecture de documents administratifs scannés. 
+
+ATTENTION : Le document peut être MAL ORIENTÉ (à l'envers, tourné à 90°, en miroir). 
+Si le texte semble illisible, essaie de le lire en le tournant mentalement.
+
+Transcris l'INTÉGRALITÉ du texte visible sur l'image, même s'il est à l'envers ou mal orienté.
+Présente ce texte sous la section `[TEXTE COMPLET]`.
