@@ -502,6 +502,26 @@ def check_deps():
     if missing:
         print(f"❌ Dépendances manquantes: {', '.join(missing)}")
         sys.exit(1)
+    
+    # Vérification critique : Tesseract OCR
+    try:
+        subprocess.run(['tesseract', '--version'], check=True, capture_output=True)
+        print("✅ Tesseract OCR installé")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("❌ ERREUR CRITIQUE: Tesseract OCR non installé")
+        print("   Installation requise: https://github.com/tesseract-ocr/tesseract")
+        print("   Windows: winget install tesseract ou téléchargement direct")
+        sys.exit(1)
+    
+    # Vérification des langues OCR
+    try:
+        result = subprocess.run(['tesseract', '--list-langs'], capture_output=True, text=True)
+        langs = result.stdout.strip().split('\n')
+        if 'fra' not in langs:
+            print("⚠️  Langue française (fra) non installée pour OCR")
+            print("   Recommandé: télécharger fra.traineddata")
+    except:
+        print("⚠️  Impossible de vérifier les langues OCR")
 
 def ensure_models():
     """Vérifie et télécharge les modèles Ollama manquants."""
@@ -561,23 +581,31 @@ def ensure_models():
 
 def preprocess_image_for_ocr(img):
     """Prétraitement image pour améliorer l'OCR."""
-    # Conversion en niveaux de gris
-    img = img.convert('L')
-    # Filtre médian pour réduire le bruit
-    img = img.filter(ImageFilter.MedianFilter(size=3))
-    # Léger rehaussement de contraste
-    img = ImageEnhance.Contrast(img).enhance(1.2)
-    # Léger rehaussement de netteté
-    img = img.filter(ImageFilter.SHARPEN)
-    return img
+    try:
+        # Conversion en niveaux de gris
+        img = img.convert('L')
+        # Filtre médian pour réduire le bruit
+        img = img.filter(ImageFilter.MedianFilter(size=3))
+        # Léger rehaussement de contraste
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+        # Léger rehaussement de netteté
+        img = img.filter(ImageFilter.SHARPEN)
+        return img
+    except Exception as e:
+        print(f"❌ Erreur prétraitement image: {e}")
+        raise
 
 def extract_from_pdf(path):
     """Extrait texte d'un PDF."""
     try:
         with pdfplumber.open(path) as pdf:
             texts = [page.extract_text() or "" for page in pdf.pages]
-        return "\n".join(texts) if any(texts) else None
-    except:
+        result = "\n".join(texts) if any(texts) else None
+        if not result:
+            print("      ⚠️  PDF sans texte natif (probablement image)")
+        return result
+    except Exception as e:
+        print(f"      ❌ Erreur extraction PDF: {e}")
         return None
 
 def create_searchable_pdf_page(img):
@@ -648,10 +676,21 @@ def _ocr_pdf_fallback(path):
         
         # OCR et création PDF simple (sans fusion avec original)
         page_pdfs = []
-        for img in images:
+        for i, img in enumerate(images, 1):
             img = preprocess_image_for_ocr(img)
-            full_text += pytesseract.image_to_string(img, lang="fra") + "\n"
-            page_pdfs.append(create_searchable_pdf_page(img))
+            try:
+                page_text = pytesseract.image_to_string(img, lang="fra")
+                if not page_text.strip():
+                    print(f"      ⚠️  Page {i}: OCR français vide, essai multilingue...")
+                    page_text = pytesseract.image_to_string(img, lang="fra+eng")
+                
+                full_text += page_text + "\n"
+                page_pdfs.append(create_searchable_pdf_page(img))
+                
+            except Exception as e:
+                print(f"      ❌ Erreur OCR page {i}: {e}")
+                print(f"      📄 Page {i} ignorée faute d'OCR")
+                continue
         
         if not full_text.strip():
             return None, None
@@ -664,7 +703,8 @@ def _ocr_pdf_fallback(path):
                 tmp.write(page_pdfs[0])  # Fallback: première page seulement
         
         return full_text, tmp_path
-    except:
+    except Exception as e:
+        print(f"      ❌ Erreur critique OCR PDF: {e}")
         return None, None
 
 
@@ -693,12 +733,38 @@ def create_searchable_pdf_from_original(original_path):
             from pypdf import PdfReader, PdfWriter
             pdf_pages = []
             full_text = ""
-            for img in images:
+            for i, img in enumerate(images, 1):
+                # Détecter et corriger la rotation avant OCR
+                try:
+                    osd = pytesseract.image_to_osd(img)
+                    m = re.search(r"Rotate:\s*(\d+)", osd)
+                    if m:
+                        rot = int(m.group(1))
+                        if rot:
+                            print(f"      🔄 Rotation page {i}: {rot}°")
+                            img = img.rotate(360 - rot, expand=True)
+                except Exception as e:
+                    print(f"      ⚠️  Impossible détecter rotation page {i}: {e}")
+
                 img_processed = preprocess_image_for_ocr(img)
-                full_text += pytesseract.image_to_string(img_processed, lang="fra") + "\n"
-                pdf_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
-                if pdf_bytes:
-                    pdf_pages.append(pdf_bytes)
+                try:
+                    page_text = pytesseract.image_to_string(img_processed, lang="fra")
+                    if not page_text.strip():
+                        print(f"      ⚠️  Page {i}: OCR français vide, essai multilingue...")
+                        page_text = pytesseract.image_to_string(img_processed, lang="fra+eng")
+                    
+                    full_text += page_text + "\n"
+                    
+                    pdf_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+                    if pdf_bytes:
+                        pdf_pages.append(pdf_bytes)
+                    else:
+                        print(f"      ❌ Impossible créer PDF searchable page {i}")
+                        
+                except Exception as e:
+                    print(f"      ❌ Erreur OCR page {i}: {e}")
+                    print(f"      📄 Page {i} ignorée faute d'OCR")
+                    continue
             if not pdf_pages:
                 return None, None
             writer = PdfWriter()
@@ -722,9 +788,10 @@ def create_searchable_pdf_from_original(original_path):
                 if m:
                     rot = int(m.group(1))
                     if rot:
+                        print(f"      🔄 Rotation image: {rot}°")
                         img = img.rotate(360 - rot, expand=True)
-            except:
-                pass
+            except Exception as e:
+                print(f"      ⚠️  Impossible détecter rotation: {e}")
             
             # Créer le PDF à partir de l'image originale (qualité préservée)
             pdf_original = BytesIO()
@@ -734,10 +801,26 @@ def create_searchable_pdf_from_original(original_path):
             
             # Prétraitement pour OCR
             img_processed = preprocess_image_for_ocr(img)
-            full_text = pytesseract.image_to_string(img_processed, lang="fra")
+            try:
+                full_text = pytesseract.image_to_string(img_processed, lang="fra")
+                if not full_text.strip():
+                    print("      ⚠️  OCR français vide, essai multilingue...")
+                    full_text = pytesseract.image_to_string(img_processed, lang="fra+eng")
+                
+                if not full_text.strip():
+                    print("      ❌ OCR impossible: aucun texte détecté")
+                    return None, None
+                    
+            except Exception as e:
+                print(f"      ❌ Erreur OCR Tesseract: {e}")
+                return None, None
             
             # Créer la couche OCR
-            pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+            try:
+                pdf_ocr_bytes = pytesseract.image_to_pdf_or_hocr(img_processed, extension='pdf')
+            except Exception as e:
+                print(f"      ❌ Erreur création PDF OCR: {e}")
+                return full_text, None
             
             if PYPDF_AVAILABLE and pdf_ocr_bytes:
                 try:
@@ -777,6 +860,7 @@ def create_searchable_pdf_from_original(original_path):
         return None, None
     
     except Exception as e:
+        print(f"      ❌ Erreur critique OCR: {e}")
         return None, None
 
 
@@ -1391,7 +1475,9 @@ def main():
                 print("✅" if text_primary else "❌")
             
             if not text_primary:
-                print("  ❌ [ERREUR] Aucun texte détecté")
+                print("  ❌ [ERREUR OCR OBLIGATOIRE] Aucun texte détecté")
+                print("      📋 OCR est requis pour tous les documents")
+                print("      🔧 Vérifiez : qualité du document, installation Tesseract, langues OCR")
                 shutil.copy2(str(file_path), str(failure / file_path.name))
                 # Copier aussi le PDF OCRisé s'il existe (pour consultation ultérieure)
                 if tmp_pdf and os.path.exists(tmp_pdf):
@@ -1400,7 +1486,7 @@ def main():
                     print(f"  └─ PDF OCRisé copié: {pdf_failure_name}")
                     _temp_files.remove(tmp_pdf) if tmp_pdf in _temp_files else None
                 with open(log_path, 'a', newline='', encoding='utf-8') as f:
-                    csv.writer(f).writerow([file_path.name, "Échec", "", "", "", ""])
+                    csv.writer(f).writerow([file_path.name, "Échec OCR", "", "OCR_OBLIGATOIRE", "TEXTE_NON_DETECTE", ""])
                 continue
             
             # ========== ANALYSE VISION IA (AVANT RECHERCHE DE DATE) ==========
