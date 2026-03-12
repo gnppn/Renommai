@@ -8,7 +8,8 @@ Je veux obtenir des fichiers PDF :
 
 # Instructions
 
-un outil, le plus simple et réparable possible
+Tu dois créer un script, un outil, le plus simple et réparable possible
+
 dans un dossier "Export" horodaté
 copier les échecs dans
 multiplateformes (Windows, macOS, Debian)
