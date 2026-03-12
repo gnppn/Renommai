@@ -40,13 +40,13 @@
 ## Étapes de Développement
 1. **Configuration initiale** : Créer un fichier de configuration par défaut.
 2. **Installation des dépendances** : Écrire un script pour installer les bibliothèques et modèles manquants.
-3. **Traitement des fichiers** : Implémenter les fonctions pour lire, analyser et renommer les fichiers.
+3. **Traitement des fichiers** : Implémenter les fonctions pour lire, analyser et renommer les fichiers selon le format YYYY-MM-DD Institution Objet.ext.
 4. **Gestion des erreurs** : Ajouter des logs et des dossiers pour les échecs de traitement.
 5. **Interface utilisateur** : Rendre le script interactif pour permettre à l'utilisateur de configurer les paramètres.
 6. **Tests et validation** : Tester le script avec des documents réels et corriger les bugs.
 
 ## Critères de Validation
-- Les fichiers PDF sont correctement renommés et recherchables.
+- Les fichiers PDF sont correctement renommés selon le format YYYY-MM-DD Institution Objet.ext et sont recherchables.
 - Les fichiers texte accompagnent chaque PDF exporté.
 - Les échecs sont correctement isolés dans un sous-dossier.
 - Le log CSV est généré et contient les informations nécessaires.
