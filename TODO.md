@@ -1,0 +1,1 @@
+Préciser explicitement le fonctionnement attendu, étape par étape
